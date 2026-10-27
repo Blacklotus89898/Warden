@@ -4,6 +4,7 @@
 package alert
 
 import (
+	"encoding/json"
 	"net/url"
 	"strings"
 	"time"
@@ -62,8 +63,9 @@ func (a Alert) Node() string {
 	return inst
 }
 
-// Expr extracts the PromQL expression from a vmalert/Prometheus generator URL
-// (…?g0.expr=… for Prometheus, …&expr=… for vmalert).
+// Expr extracts the PromQL expression from the generator URL. Three shapes:
+// Prometheus (?g0.expr=…), vmalert's own UI (&expr=…), and — what this
+// cluster's vmalert emits — Grafana explore (?left={"queries":[{"expr":…}]}).
 func (a Alert) Expr() string {
 	u, err := url.Parse(a.GeneratorURL)
 	if err != nil {
@@ -73,5 +75,16 @@ func (a Alert) Expr() string {
 	if e := q.Get("g0.expr"); e != "" {
 		return e
 	}
-	return q.Get("expr")
+	if e := q.Get("expr"); e != "" {
+		return e
+	}
+	var left struct {
+		Queries []struct {
+			Expr string `json:"expr"`
+		} `json:"queries"`
+	}
+	if json.Unmarshal([]byte(q.Get("left")), &left) == nil && len(left.Queries) > 0 {
+		return left.Queries[0].Expr
+	}
+	return ""
 }
