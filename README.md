@@ -3,6 +3,9 @@
 An incident-investigation agent for the homelab platform. **It reads the
 cluster but never writes to it.** Decision record:
 [Homelab ADR 0011](https://github.com/Blacklotus89898/Homelab/blob/main/docs/adr/0011-warden-sre-agent.md).
+Deployment: [Homelab `services/warden`](https://github.com/Blacklotus89898/Homelab/tree/main/services/warden).
+When it misbehaves: [DaVinci runbook `warden.md`](https://github.com/Blacklotus89898/DaVinci/blob/main/docs/runbooks/warden.md).
+Live map: https://warden.lab.home/map (LAN only).
 
 ```mermaid
 flowchart LR
@@ -68,7 +71,7 @@ where its pods run and Warden's latest investigation of it.
 
 It reads through the same catalogue as the collectors (nodes, ArgoCD
 Applications, per-namespace pods) plus one `probe_success` query, so the
-boundary below is unchanged. Proxmox is not observable from inside the
+boundary above is unchanged. Proxmox is not observable from inside the
 cluster; its box is inferred from the nodes. Like everything in Warden, the
 map runs on the worker: when the worker is down, so is the map (the GitHub
 heartbeat watchdog covers that case).
