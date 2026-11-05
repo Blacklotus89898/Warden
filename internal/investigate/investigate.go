@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/Blacklotus89898/Warden/internal/alert"
+	"github.com/Blacklotus89898/Warden/internal/door"
 	"github.com/Blacklotus89898/Warden/internal/kb"
 	"github.com/Blacklotus89898/Warden/internal/kube"
 	"github.com/Blacklotus89898/Warden/internal/redact"
@@ -42,7 +43,10 @@ type Investigator struct {
 	Kube    Kube
 	Metrics Metrics
 	KB      KB
-	Now     func() time.Time
+	// Hosts is the front-door host-label override (WARDEN_MAP_HOSTS), shared
+	// with the status map so a door resolves to the same namespace in both.
+	Hosts map[string]string
+	Now   func() time.Time
 }
 
 // Collectors is the fixed catalogue of evidence, in order (pinned by a test).
@@ -92,6 +96,9 @@ type Bundle struct {
 	Started   time.Time         `json:"started"`
 	Duration  string            `json:"duration"`
 	Namespace string            `json:"namespace,omitempty"`
+	// Door is set when the alert is about a front door (its instance is a
+	// probe URL); the namespace was then resolved from it, not labelled.
+	Door      string            `json:"door,omitempty"`
 	Pods      []PodState        `json:"pods,omitempty"`
 	Events    []EventLine       `json:"events,omitempty"`
 	Apps      []AppState        `json:"apps,omitempty"`
@@ -132,6 +139,30 @@ func (iv *Investigator) Run(ctx context.Context, id string, a alert.Alert) *Bund
 			b.Errors[name] = redact.Truncate(redact.String(err.Error()), 300)
 		}
 	}
+	// A front-door alert (SLO burn, door down) carries the probe URL, not a
+	// namespace: resolve it the way the status map does, so the namespace
+	// collectors run against the app behind the door instead of nothing.
+	var apps *kube.List[kube.Application]
+	if inst := a.Labels["instance"]; b.Namespace == "" && door.IsDoor(inst) {
+		b.Door = door.Name(inst)
+		step("door", func(c context.Context) error {
+			var err error
+			if apps, err = iv.applications(c); err != nil {
+				return err
+			}
+			appNS := map[string]string{}
+			for _, ap := range apps.Items {
+				if ns := ap.Spec.Destination.Namespace; ns != "" {
+					appNS[ap.Metadata.Name] = ns
+				}
+			}
+			b.Namespace = door.NewResolver(iv.Hosts, appNS).Namespace(inst)
+			if b.Namespace == "" {
+				return fmt.Errorf("no namespace known for front door %s (add it to WARDEN_MAP_HOSTS)", b.Door)
+			}
+			return nil
+		})
+	}
 	var pods []kube.Pod
 	if b.Namespace != "" {
 		step("pods", func(c context.Context) error {
@@ -142,7 +173,7 @@ func (iv *Investigator) Run(ctx context.Context, id string, a alert.Alert) *Bund
 		step("logs", func(c context.Context) error { return iv.logs(c, b, pods) })
 		step("events", func(c context.Context) error { return iv.events(c, b) })
 	}
-	step("argocd", func(c context.Context) error { return iv.argocd(c, b) })
+	step("argocd", func(c context.Context) error { return iv.argocd(c, b, apps) })
 	step("nodes", func(c context.Context) error { return iv.nodes(c, b, a) })
 	step("metric", func(c context.Context) error { return iv.metric(c, b, a) })
 	step("kb", func(context.Context) error { iv.kb(b, a); return nil })
@@ -305,12 +336,23 @@ func (iv *Investigator) events(ctx context.Context, b *Bundle) error {
 
 // argocd: the apps deploying into the namespace; for a cluster-wide alert,
 // every app that isn't Synced+Healthy.
-func (iv *Investigator) argocd(ctx context.Context, b *Bundle) error {
+func (iv *Investigator) applications(ctx context.Context) (*kube.List[kube.Application], error) {
 	var list kube.List[kube.Application]
 	if err := iv.Kube.GetJSON(ctx, "/apis/argoproj.io/v1alpha1/namespaces/argocd/applications", nil, &list); err != nil {
-		return err
+		return nil, err
 	}
-	for _, a := range list.Items {
+	return &list, nil
+}
+
+// argocd: apps is the list the door step already fetched, or nil.
+func (iv *Investigator) argocd(ctx context.Context, b *Bundle, apps *kube.List[kube.Application]) error {
+	if apps == nil {
+		var err error
+		if apps, err = iv.applications(ctx); err != nil {
+			return err
+		}
+	}
+	for _, a := range apps.Items {
 		ok := a.Status.Sync.Status == "Synced" && a.Status.Health.Status == "Healthy"
 		if b.Namespace != "" {
 			if a.Spec.Destination.Namespace != b.Namespace {
@@ -364,7 +406,23 @@ func (iv *Investigator) metric(ctx context.Context, b *Bundle, a alert.Alert) er
 	if b.Expr == "" || iv.Metrics == nil {
 		return nil
 	}
-	s, err := iv.Metrics.Query(ctx, b.Expr, maxSeries)
+	// Rule expressions are cluster-wide (probe_success == 0 over every door):
+	// ask for more series, then keep the alert's own instance when it has one.
+	s, err := iv.Metrics.Query(ctx, b.Expr, 4*maxSeries)
+	if inst := a.Labels["instance"]; inst != "" {
+		var own []vm.Sample
+		for _, x := range s {
+			if x.Labels["instance"] == inst {
+				own = append(own, x)
+			}
+		}
+		if len(own) > 0 {
+			s = own
+		}
+	}
+	if len(s) > maxSeries {
+		s = s[:maxSeries]
+	}
 	b.Metric = s
 	return err
 }

@@ -22,6 +22,7 @@ import (
 	"github.com/Blacklotus89898/Warden/internal/alert"
 	"github.com/Blacklotus89898/Warden/internal/investigate"
 	"github.com/Blacklotus89898/Warden/internal/journal"
+	"github.com/Blacklotus89898/Warden/internal/redact"
 	"github.com/Blacklotus89898/Warden/internal/statusmap"
 )
 
@@ -32,6 +33,20 @@ const (
 	KindInvestigated = "investigation.finished"
 	KindNotified     = "notify.sent"
 	KindNotifyError  = "notify.error"
+	KindGrouped      = "alert.grouped" // investigated, digest folded into an earlier one
+	KindStorm        = "storm.started"
+)
+
+// Grouping (the 2026-11-05 recovery sent 23 digests in 8 minutes for one
+// outage). Every alert is still investigated and journaled — reads are cheap
+// and the bundles are the eval set — but only the first digest per
+// namespace (or per alertname when there is none) within GroupWindow goes to
+// the phone, and once StormAfter digests went out within StormWindow, the
+// rest are held behind a single storm notice carrying the cluster-wide view.
+const (
+	GroupWindow = 15 * time.Minute
+	StormWindow = 10 * time.Minute
+	StormAfter  = 4
 )
 
 // Notifier sends the digest (notify.Ntfy implements it).
@@ -50,12 +65,19 @@ type Server struct {
 	Runner   Runner
 	Notify   Notifier
 	Enabled  bool
-	DailyCap int // investigations per UTC day (default 40)
+	DailyCap int // digests (phone pushes) per UTC day (default 40); intake is bounded at 4x
+	Now      func() time.Time
 	Log      *slog.Logger
 	Version  string
 	Map      *statusmap.Builder // nil = no /map
 
 	queue chan job
+
+	// Worker-only state (one goroutine): no lock. Lost on restart, which at
+	// worst sends one extra digest.
+	groups  map[string]sent // group key → the digest it folds into
+	digests []time.Time     // digests sent within StormWindow
+	storm   sent            // the open storm notice, if any
 
 	mapMu   sync.Mutex
 	mapAt   time.Time
@@ -65,6 +87,11 @@ type Server struct {
 // MapTTL bounds how often the map re-reads the cluster (~30 GETs a build),
 // however many browsers have it open.
 const MapTTL = 15 * time.Second
+
+type sent struct {
+	id string
+	at time.Time
+}
 
 type job struct {
 	id string
@@ -77,6 +104,7 @@ const QueueSize = 16
 // Start runs the worker until ctx ends.
 func (s *Server) Start(ctx context.Context) {
 	s.queue = make(chan job, QueueSize)
+	s.groups = map[string]sent{}
 	go func() {
 		for {
 			select {
@@ -102,6 +130,13 @@ func (s *Server) cap() int {
 	return 40
 }
 
+func (s *Server) now() time.Time {
+	if s.Now != nil {
+		return s.Now()
+	}
+	return time.Now()
+}
+
 func (s *Server) skip(ctx context.Context, a alert.Alert, reason string) {
 	_, _ = s.J.Append(ctx, KindSkipped, "", map[string]string{
 		"alertname": a.Name(), "namespace": a.Namespace(), "key": a.Key(), "reason": reason})
@@ -125,9 +160,11 @@ func (s *Server) Accept(ctx context.Context, p alert.Payload) int {
 			s.skip(ctx, a, "dedup store: "+err.Error())
 			continue
 		}
-		day := time.Now().UTC().Truncate(24 * time.Hour)
-		if used, err := s.J.CountSince(ctx, KindReceived, day); err != nil || used >= s.cap() {
-			s.skip(ctx, a, fmt.Sprintf("daily cap %d reached", s.cap()))
+		// Intake bound: grouped alerts cost reads, not pushes, so intake
+		// allows 4x the digest cap before refusing to investigate at all.
+		day := s.now().UTC().Truncate(24 * time.Hour)
+		if used, err := s.J.CountSince(ctx, KindReceived, day); err != nil || used >= 4*s.cap() {
+			s.skip(ctx, a, fmt.Sprintf("daily intake %d reached", 4*s.cap()))
 			continue
 		}
 		id := newID()
@@ -147,21 +184,107 @@ func (s *Server) investigate(ctx context.Context, jb job) {
 	if _, err := s.J.Append(ctx, KindInvestigated, jb.id, b); err != nil && s.Log != nil {
 		s.Log.Error("journal bundle", "id", jb.id, "err", err)
 	}
+	if s.hold(ctx, jb, b) {
+		return
+	}
 	title, body := b.Digest()
 	prio := "default"
 	if jb.a.Labels["severity"] == "critical" {
 		prio = "high"
 	}
-	nctx, cancel := context.WithTimeout(ctx, 20*time.Second)
-	defer cancel()
-	if err := s.Notify.Send(nctx, title, body, prio); err != nil {
-		_, _ = s.J.Append(ctx, KindNotifyError, jb.id, map[string]string{"error": err.Error()})
+	if !s.send(ctx, jb.id, title, body, prio) {
 		return
 	}
-	_, _ = s.J.Append(ctx, KindNotified, jb.id, map[string]string{"title": title})
+	s.groups[groupKey(b)] = sent{id: jb.id, at: s.now()}
 	if s.Log != nil {
 		s.Log.Info("investigated", "id", jb.id, "alert", jb.a.Name(), "ns", jb.a.Namespace(), "took", b.Duration)
 	}
+}
+
+// groupKey: alerts about the same namespace are one incident; with no
+// namespace (resolved or labelled), the alertname is the best we have.
+func groupKey(b *investigate.Bundle) string {
+	if b.Namespace != "" {
+		return "ns:" + b.Namespace
+	}
+	return "alert:" + b.Alert.Name()
+}
+
+// hold decides whether b's digest is folded into an earlier push instead of
+// sent. It journals why, and opens a storm notice when one is due.
+func (s *Server) hold(ctx context.Context, jb job, b *investigate.Bundle) bool {
+	now := s.now()
+	key := groupKey(b)
+	fold := func(into sent, reason string) bool {
+		_, _ = s.J.Append(ctx, KindGrouped, jb.id, map[string]string{
+			"into": into.id, "key": key, "alertname": jb.a.Name(), "reason": reason})
+		return true
+	}
+	if g, ok := s.groups[key]; ok && now.Sub(g.at) < GroupWindow {
+		return fold(g, "same "+key+" within "+GroupWindow.String())
+	}
+	if s.storm.id != "" && now.Sub(s.storm.at) < StormWindow {
+		s.groups[key] = s.storm
+		return fold(s.storm, "alert storm")
+	}
+	recent := s.digests[:0]
+	for _, t := range s.digests {
+		if now.Sub(t) < StormWindow {
+			recent = append(recent, t)
+		}
+	}
+	s.digests = recent
+	if len(s.digests) < StormAfter {
+		return false
+	}
+	// Storm: one notice with the cluster-wide picture, then hold the rest.
+	title := fmt.Sprintf("Warden: alert storm — %d+ alerts in %s", len(s.digests)+1, StormWindow)
+	var w strings.Builder
+	fmt.Fprintf(&w, "Further digests are held for %s and every alert is still investigated (GET /investigations).\n", StormWindow)
+	fmt.Fprintf(&w, "Latest: %s (%s)\n", jb.a.Name(), strings.TrimPrefix(strings.TrimPrefix(key, "ns:"), "alert:"))
+	if s.Map != nil {
+		mctx, cancel := context.WithTimeout(ctx, 20*time.Second)
+		m, err := s.Map.Build(mctx)
+		cancel()
+		switch {
+		case err != nil:
+			fmt.Fprintf(&w, "\nStatus map unavailable: %v\n", err)
+		case len(m.Causes) == 0:
+			fmt.Fprintf(&w, "\nStatus map: no red component right now (transient?)\n")
+		default:
+			fmt.Fprintf(&w, "\nLikely causes (status map):\n")
+			for i, c := range m.Causes {
+				if i == 8 {
+					fmt.Fprintf(&w, "… %d more on /map\n", len(m.Causes)-8)
+					break
+				}
+				fmt.Fprintf(&w, "• %s\n", c)
+			}
+		}
+	}
+	s.storm = sent{id: jb.id, at: now}
+	_, _ = s.J.Append(ctx, KindStorm, jb.id, map[string]any{"digests_in_window": len(s.digests), "window": StormWindow.String()})
+	s.send(ctx, jb.id, title, redact.Truncate(redact.String(w.String()), investigate.DigestLimit), "high")
+	s.groups[key] = s.storm
+	return true
+}
+
+// send pushes one notification within the daily digest cap and journals it.
+func (s *Server) send(ctx context.Context, id, title, body, prio string) bool {
+	day := s.now().UTC().Truncate(24 * time.Hour)
+	if used, err := s.J.CountSince(ctx, KindNotified, day); err != nil || used >= s.cap() {
+		_, _ = s.J.Append(ctx, KindSkipped, id, map[string]string{"reason": fmt.Sprintf("daily digest cap %d reached", s.cap())})
+		return false
+	}
+	nctx, cancel := context.WithTimeout(ctx, 20*time.Second)
+	defer cancel()
+	if err := s.Notify.Send(nctx, title, body, prio); err != nil {
+		_, _ = s.J.Append(ctx, KindNotifyError, id, map[string]string{"error": err.Error()})
+		return false
+	}
+	_, _ = s.J.Append(ctx, KindNotified, id, map[string]string{"title": title})
+	s.digests = append(s.digests, s.now())
+	return true
 }
 
 // Routes registers the HTTP API.

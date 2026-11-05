@@ -79,6 +79,7 @@ func main() {
 			Kube:    kc,
 			Metrics: metrics,
 			KB:      &kb.Index{Roots: roots},
+			Hosts:   hosts,
 		},
 		Map:    &statusmap.Builder{Kube: kc, Metrics: metrics, Hosts: hosts},
 		Notify: notify.Ntfy{URL: os.Getenv("WARDEN_NTFY_URL"), Topic: envOr("WARDEN_NTFY_TOPIC", "warden")},
