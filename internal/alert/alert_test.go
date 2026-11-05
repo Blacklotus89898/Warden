@@ -27,3 +27,12 @@ func TestKeyAndLabels(t *testing.T) {
 		t.Errorf("key %q ns %q node %q", a.Key(), a.Namespace(), a.Node())
 	}
 }
+
+// A probe URL in instance names a front door, not a node ("https" was
+// returned before: the cut stopped at the scheme's colon).
+func TestDoorInstanceIsNotANode(t *testing.T) {
+	a := Alert{Labels: map[string]string{"instance": "https://linkding.lab.home/"}}
+	if n := a.Node(); n != "" {
+		t.Errorf("Node() = %q, want empty", n)
+	}
+}

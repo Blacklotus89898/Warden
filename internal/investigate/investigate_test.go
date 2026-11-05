@@ -181,3 +181,44 @@ func TestClusterWideAlertSkipsNamespaceCollectors(t *testing.T) {
 		t.Errorf("cluster-wide: only unhealthy apps, got %+v", b.Apps)
 	}
 }
+
+// A front-door alert has an instance URL and no namespace label. It must be
+// investigated as the app behind the door (2026-11-05: 24 of 44 bundles ran
+// cluster-wide and found nothing, because this step was missing).
+func TestFrontDoorAlertResolvesToItsNamespace(t *testing.T) {
+	iv, k, _ := harness()
+	a := alert.Alert{Status: "firing", StartsAt: now, Labels: map[string]string{
+		"alertname": "SloFrontDoorDown", "severity": "critical", "instance": "https://petal.lab.home/"}}
+	b := iv.Run(context.Background(), "inv_4", a)
+	if b.Namespace != "petal" || b.Door != "petal.lab.home" {
+		t.Fatalf("namespace %q door %q, want petal / petal.lab.home", b.Namespace, b.Door)
+	}
+	if len(b.Pods) != 1 || len(b.Events) == 0 || len(b.Apps) != 1 {
+		t.Errorf("namespace collectors must run for the resolved door: %+v", b)
+	}
+	listed := 0
+	for _, p := range k.got {
+		if strings.HasPrefix(p, "/apis/argoproj.io/") {
+			listed++
+		}
+	}
+	if listed != 1 {
+		t.Errorf("applications fetched %d times, want once (door step reuses it)", listed)
+	}
+	if b.Errors["door"] != "" || len(b.Nodes) != 1 { // only the pressured worker; "https" is not a node
+		t.Errorf("errors %v nodes %+v", b.Errors, b.Nodes)
+	}
+	if title, _ := b.Digest(); !strings.Contains(title, "(petal)") {
+		t.Errorf("digest title %q must name the namespace", title)
+	}
+}
+
+func TestUnknownDoorSaysSo(t *testing.T) {
+	iv, _, _ := harness()
+	a := alert.Alert{Status: "firing", StartsAt: now, Labels: map[string]string{
+		"alertname": "SloFrontDoorDown", "severity": "critical", "instance": "https://mystery.lab.home/"}}
+	b := iv.Run(context.Background(), "inv_5", a)
+	if b.Namespace != "" || !strings.Contains(b.Errors["door"], "WARDEN_MAP_HOSTS") {
+		t.Errorf("unknown door: ns %q errors %v", b.Namespace, b.Errors)
+	}
+}

@@ -18,6 +18,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Blacklotus89898/Warden/internal/door"
 	"github.com/Blacklotus89898/Warden/internal/kube"
 	"github.com/Blacklotus89898/Warden/internal/vm"
 )
@@ -144,8 +145,8 @@ type Builder struct {
 
 // Tier membership for the platform layers; everything else is an app.
 var (
-	platformNS = []string{"kube-system", "istio-system", "argocd", "cert-manager", "sealed-secrets", "argo-rollouts"}
-	observeNS  = []string{"monitoring", "openobserve", "warden", "heartbeat"}
+	platformNS = door.Platform
+	observeNS  = door.Observe
 )
 
 // PendingGrace is how long a Pending pod is "starting" before it counts as stuck.
@@ -378,6 +379,7 @@ func (b *Builder) Build(ctx context.Context) (*Map, error) {
 	}
 
 	// ---- front doors (blackbox probes) ----
+	resolve := door.NewResolver(b.Hosts, appNS)
 	var doors []*Component
 	if b.Metrics != nil {
 		samples, err := b.Metrics.Query(ctx, "probe_success", 200)
@@ -389,7 +391,7 @@ func (b *Builder) Build(ctx context.Context) (*Map, error) {
 			if inst == "" {
 				continue
 			}
-			c := &Component{ID: "door/" + inst, Name: doorName(inst), Kind: "frontdoor", Target: inst, Status: Green}
+			c := &Component{ID: "door/" + inst, Name: door.Name(inst), Kind: "frontdoor", Target: inst, Status: Green}
 			if job := s.Labels["job"]; strings.HasPrefix(job, "staging") {
 				c.Notes = append(c.Notes, "staging (no SLO)")
 			}
@@ -397,7 +399,7 @@ func (b *Builder) Build(ctx context.Context) (*Map, error) {
 				c.Status = Red
 				c.Reasons = append(c.Reasons, "probe failing")
 			}
-			if ns := b.doorNamespace(inst, namespaces, appNS); ns != "" {
+			if ns := resolve.Namespace(inst); ns != "" {
 				m.Edges = append(m.Edges, Edge{From: c.ID, To: "ns/" + ns})
 				if nc := m.byID["ns/"+ns]; nc != nil && c.Status == Red {
 					nc.Status = worst(nc.Status, Red)
@@ -491,50 +493,6 @@ func (m *Map) Attach(invs []Seen) {
 			c.Last = &x
 		}
 	}
-}
-
-// doorNamespace maps a probe target to the namespace that serves it.
-func (b *Builder) doorNamespace(inst string, namespaces map[string]bool, appNS map[string]string) string {
-	u, err := url.Parse(inst)
-	if err != nil || u.Hostname() == "" {
-		return ""
-	}
-	h := u.Hostname()
-	if strings.HasSuffix(h, ".svc.cluster.local") || strings.HasSuffix(h, ".svc") {
-		parts := strings.Split(h, ".")
-		if len(parts) >= 2 {
-			return parts[1]
-		}
-	}
-	label, _, _ := strings.Cut(h, ".")
-	if ns, ok := b.Hosts[label]; ok {
-		return ns
-	}
-	if namespaces[label] {
-		return label
-	}
-	if ns, ok := appNS[label]; ok {
-		return ns
-	}
-	for app, ns := range appNS { // uptime → uptime-kuma, auth → authentik
-		if strings.HasPrefix(app, label) {
-			return ns
-		}
-	}
-	return ""
-}
-
-func doorName(inst string) string {
-	u, err := url.Parse(inst)
-	if err != nil || u.Hostname() == "" {
-		return inst
-	}
-	h := u.Hostname()
-	if strings.HasSuffix(h, ".svc.cluster.local") {
-		parts := strings.Split(h, ".")
-		return parts[0] + "." + parts[1] + " (in-cluster)"
-	}
-	return h
 }
 
 func firstLine(s, def string) string {

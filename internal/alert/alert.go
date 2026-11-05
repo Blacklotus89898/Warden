@@ -57,6 +57,9 @@ func (a Alert) Node() string {
 		return n
 	}
 	inst := a.Labels["instance"]
+	if strings.Contains(inst, "://") { // a probe URL names a door, not a node
+		return ""
+	}
 	if h, _, ok := strings.Cut(inst, ":"); ok {
 		inst = h
 	}

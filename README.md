@@ -20,8 +20,12 @@ flowchart LR
 ```
 
 For each **firing** alert, Warden runs once and collects an evidence bundle.
-Collectors run independently, and a failure is recorded without stopping the
-rest:
+A front-door alert (SLO burn, door down) has a probe URL in `instance`
+instead of a namespace. Warden resolves it to the namespace behind the door
+the same way the status map does (in-cluster service DNS, then
+`WARDEN_MAP_HOSTS`, then namespace or ArgoCD app name), so the namespace
+collectors run on the right app. Collectors run independently, and a failure
+is recorded without stopping the rest:
 
 | Collector | What |
 |---|---|
@@ -30,7 +34,7 @@ rest:
 | events | Warning events in the namespace, last 2h, merged per object+reason |
 | argocd | the Applications deploying into the namespace (cluster-wide alert: every app not Synced/Healthy) |
 | nodes | the alert's node, plus any node NotReady, cordoned or under pressure |
-| metric | the alert's own expression, evaluated now |
+| metric | the alert's own expression, evaluated now (narrowed to the alert's `instance` when it has one) |
 | kb | the alert's `runbook_url`, plus the top knowledge-base hits for the alert name, namespace and problem reasons |
 
 The full bundle is journaled. That record is the future eval set. A
@@ -48,10 +52,26 @@ redacted, truncated digest goes to ntfy topic `warden`.
   untrusted. Everything leaving the journal is redacted, because ntfy is
   unauthenticated on the LAN.
 - **Rate limits:** one investigation per firing (deduplicated by
-  fingerprint and `startsAt`), one worker, a bounded queue, and a daily cap.
-  Every skip is journaled.
+  fingerprint and `startsAt`), one worker, a bounded queue, a daily cap on
+  pushes and a daily intake bound of 4x that cap. Every skip is journaled.
 - **Off switch:** `WARDEN_ENABLED=false` journals alerts and does nothing
   else.
+
+## Grouping
+
+One outage fires many alerts. The power-outage recovery on 2026-11-05 sent 23
+digests in 8 minutes; replayed through these rules, it sends 6. Every alert
+is still investigated and journaled, because reads are cheap and the bundles
+are the eval set. Only the pushes are grouped:
+
+- **Same namespace within 15 minutes** (or the same alertname, if there is no
+  namespace): one push. The later bundles are journaled as `alert.grouped`
+  with the id they fold into.
+- **Storm:** once 4 digests have gone out within 10 minutes, the next alert
+  sends one notice instead, carrying the status map's likely causes. The
+  rest are held for 10 minutes.
+
+Grouping state is in memory, so a restart costs at most one extra push.
 
 ## Status map
 
@@ -93,11 +113,11 @@ heartbeat watchdog covers that case).
 | env | default | |
 |---|---|---|
 | `WARDEN_ENABLED` | `true` | `false` = journal only |
-| `WARDEN_DAILY_CAP` | `40` | investigations per UTC day |
+| `WARDEN_DAILY_CAP` | `40` | pushes per UTC day; intake (investigations) is bounded at 4x |
 | `WARDEN_NTFY_URL` / `WARDEN_NTFY_TOPIC` | — / `warden` | digest push (empty URL = off) |
 | `WARDEN_VM_URL` | `http://vmsingle-vmstack.monitoring.svc:8428` | instant queries |
 | `WARDEN_KB_ROOTS` | — | `label=dir,label=dir` (git-synced markdown) |
-| `WARDEN_MAP_HOSTS` | — | `label=namespace,…` for front-door hosts whose first label isn't a namespace or app name (`grafana=monitoring`) |
+| `WARDEN_MAP_HOSTS` | — | `label=namespace,…` for front-door hosts whose first label isn't a namespace or app name (`grafana=monitoring`). Used by both the map and front-door investigations |
 
 ## Roadmap
 

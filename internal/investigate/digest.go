@@ -26,6 +26,9 @@ func (b *Bundle) Digest() (title, body string) {
 	if s := a.Annotations["summary"]; s != "" {
 		line("%s", redact.Truncate(redact.String(s), 200))
 	}
+	if b.Door != "" && b.Namespace != "" {
+		line("Front door %s → namespace %s", b.Door, b.Namespace)
+	}
 	if len(b.Pods) > 0 {
 		line("\nPods:")
 		for _, p := range b.Pods {
