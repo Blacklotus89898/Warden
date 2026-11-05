@@ -50,6 +50,22 @@ redacted, truncated digest goes to ntfy topic `warden`.
 - **Off switch:** `WARDEN_ENABLED=false` journals alerts and does nothing
   else.
 
+## Status map
+
+`/map` shows every node, namespace and front door with one status each
+(red / amber / green, grey = suspended on purpose), worst first, plus a
+"likely causes" banner. A namespace on a NotReady node is red *because of the
+node*, so the node is named as the cause and its namespaces are not.
+Clicking a box draws its dependency lines and shows why, its ArgoCD apps,
+where its pods run and Warden's latest investigation of it.
+
+It reads through the same catalogue as the collectors (nodes, ArgoCD
+Applications, per-namespace pods) plus one `probe_success` query, so the
+boundary below is unchanged. Proxmox is not observable from inside the
+cluster; its box is inferred from the nodes. Like everything in Warden, the
+map runs on the worker: when the worker is down, so is the map (the GitHub
+heartbeat watchdog covers that case).
+
 ## API
 
 | | |
@@ -57,6 +73,8 @@ redacted, truncated digest goes to ntfy topic `warden`.
 | `POST /alerts` | alertmanager webhook (receiver `warden`) |
 | `GET /investigations` | recent investigations |
 | `GET /investigations/{id}` | one bundle with its journal trail |
+| `GET /map` | the status map page: host → nodes → platform → observability → apps → front doors |
+| `GET /map.json` | the data behind it (rebuilt at most every 15s) |
 | `GET /metrics` | journal events by kind, `warden_enabled` |
 | `GET /health` | liveness |
 
@@ -69,6 +87,7 @@ redacted, truncated digest goes to ntfy topic `warden`.
 | `WARDEN_NTFY_URL` / `WARDEN_NTFY_TOPIC` | — / `warden` | digest push (empty URL = off) |
 | `WARDEN_VM_URL` | `http://vmsingle-vmstack.monitoring.svc:8428` | instant queries |
 | `WARDEN_KB_ROOTS` | — | `label=dir,label=dir` (git-synced markdown) |
+| `WARDEN_MAP_HOSTS` | — | `label=namespace,…` for front-door hosts whose first label isn't a namespace or app name (`grafana=monitoring`) |
 
 ## Roadmap
 

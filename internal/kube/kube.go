@@ -146,9 +146,10 @@ type ContainerState struct {
 // Pod is the subset of a Pod Warden uses.
 type Pod struct {
 	Metadata struct {
-		Name      string            `json:"name"`
-		Namespace string            `json:"namespace"`
-		Labels    map[string]string `json:"labels"`
+		Name              string            `json:"name"`
+		Namespace         string            `json:"namespace"`
+		Labels            map[string]string `json:"labels"`
+		CreationTimestamp time.Time         `json:"creationTimestamp"`
 	} `json:"metadata"`
 	Spec struct {
 		NodeName string `json:"nodeName"`

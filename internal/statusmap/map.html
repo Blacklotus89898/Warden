@@ -1,0 +1,282 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Warden status map</title>
+<style>
+:root {
+  --bg: #f6f7f9; --panel: #ffffff; --ink: #1c2330; --muted: #5d6878; --line: #dfe3ea;
+  --red: #d64545; --red-bg: #fdecec; --amber: #c98a12; --amber-bg: #fdf4e1;
+  --green: #2f9e62; --green-bg: #e8f6ee; --grey: #8a93a3; --grey-bg: #eef0f3;
+  --unknown: #7a5cc9; --unknown-bg: #f0ebfb; --focus: #2d6cdf;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #12151b; --panel: #1b2029; --ink: #e6e9ef; --muted: #98a2b3; --line: #2c3340;
+    --red: #f06a6a; --red-bg: #3a1f22; --amber: #e3a93a; --amber-bg: #3a2f1a;
+    --green: #4cc184; --green-bg: #1a3227; --grey: #8a93a3; --grey-bg: #252a33;
+    --unknown: #a68cf0; --unknown-bg: #2a2340; --focus: #6d9cf5;
+  }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--ink);
+  font: 14px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+header { padding: 16px; display: flex; flex-wrap: wrap; gap: 12px; align-items: center;
+  justify-content: space-between; border-bottom: 1px solid var(--line); background: var(--panel); }
+h1 { font-size: 18px; margin: 0; }
+.meta { color: var(--muted); font-size: 12px; }
+.counts { display: flex; gap: 8px; flex-wrap: wrap; }
+.pill { border-radius: 999px; padding: 2px 10px; font-weight: 600; font-size: 12px; }
+.pill.red { background: var(--red-bg); color: var(--red); }
+.pill.amber { background: var(--amber-bg); color: var(--amber); }
+.pill.green { background: var(--green-bg); color: var(--green); }
+.pill.grey { background: var(--grey-bg); color: var(--grey); }
+.pill.unknown { background: var(--unknown-bg); color: var(--unknown); }
+label.toggle { display: flex; gap: 6px; align-items: center; color: var(--muted); font-size: 13px; cursor: pointer; }
+main { padding: 16px; max-width: 1400px; margin: 0 auto; position: relative; }
+.causes { background: var(--red-bg); border: 1px solid var(--red); color: var(--ink);
+  border-radius: 8px; padding: 10px 14px; margin-bottom: 16px; }
+.causes b { color: var(--red); }
+.causes ul { margin: 6px 0 0; padding-left: 20px; }
+.ok { background: var(--green-bg); border: 1px solid var(--green); border-radius: 8px;
+  padding: 10px 14px; margin-bottom: 16px; }
+.errors { color: var(--unknown); font-size: 12px; margin-bottom: 12px; }
+.tier { margin-bottom: 18px; }
+.tier h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted);
+  margin: 0 0 8px; }
+.row { display: flex; flex-wrap: wrap; gap: 8px; }
+.card { background: var(--panel); border: 1px solid var(--line); border-left: 5px solid var(--grey);
+  border-radius: 8px; padding: 8px 10px; min-width: 150px; max-width: 260px; flex: 0 1 auto;
+  cursor: pointer; transition: opacity .15s, box-shadow .15s; position: relative; z-index: 1; }
+.card:hover, .card:focus { box-shadow: 0 0 0 2px var(--focus); outline: none; }
+.card.red { border-left-color: var(--red); }
+.card.amber { border-left-color: var(--amber); }
+.card.green { border-left-color: var(--green); }
+.card.unknown { border-left-color: var(--unknown); }
+.card .name { font-weight: 600; word-break: break-word; }
+.card .sub { color: var(--muted); font-size: 12px; margin-top: 2px; }
+.card .why { font-size: 12px; margin-top: 4px; color: var(--ink); }
+.card.red .why { color: var(--red); }
+.card.amber .why { color: var(--amber); }
+.dim .card:not(.lit) { opacity: .25; }
+.card.sel { box-shadow: 0 0 0 2px var(--focus); }
+svg#wires { position: absolute; inset: 0; pointer-events: none; z-index: 0; overflow: visible; }
+svg#wires line { stroke: var(--focus); stroke-width: 1.5; opacity: .7; }
+aside { position: fixed; right: 16px; bottom: 16px; width: min(420px, calc(100vw - 32px));
+  max-height: 70vh; overflow: auto; background: var(--panel); border: 1px solid var(--line);
+  border-radius: 10px; padding: 14px 16px; box-shadow: 0 8px 30px rgba(0,0,0,.18); display: none; z-index: 5; }
+aside.open { display: block; }
+aside h3 { margin: 0 0 4px; font-size: 16px; }
+aside .close { position: absolute; top: 8px; right: 10px; background: none; border: 0;
+  color: var(--muted); font-size: 18px; cursor: pointer; }
+aside ul { padding-left: 18px; margin: 4px 0 10px; }
+aside .k { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .05em; margin-top: 8px; }
+code { font-size: 12px; }
+.empty { color: var(--muted); font-size: 13px; }
+</style>
+</head>
+<body>
+<header>
+  <div>
+    <h1>Platform status</h1>
+    <div class="meta" id="meta">loading…</div>
+  </div>
+  <div class="counts" id="counts"></div>
+  <label class="toggle"><input type="checkbox" id="onlyBad"> only problems</label>
+</header>
+<main id="main">
+  <svg id="wires"></svg>
+  <div id="banner"></div>
+  <div id="errors" class="errors"></div>
+  <div id="tiers"></div>
+</main>
+<aside id="detail" aria-live="polite"><button class="close" aria-label="close">×</button><div id="detailBody"></div></aside>
+<script>
+(function () {
+  "use strict";
+  var data = null, selected = null;
+  var order = ["red", "amber", "unknown", "green", "grey"];
+  var label = { red: "down", amber: "degraded", unknown: "unknown", green: "ok", grey: "off" };
+  var onlyBad = document.getElementById("onlyBad");
+  try { onlyBad.checked = localStorage.getItem("warden.onlyBad") === "1"; } catch (e) {}
+
+  function el(tag, cls, text) {
+    var e = document.createElement(tag);
+    if (cls) e.className = cls;
+    if (text != null) e.textContent = text;
+    return e;
+  }
+
+  function neighbours(id) {
+    var set = {}; set[id] = true;
+    // walk up (what it depends on) and down (what depends on it)
+    var changed = true, up = {}, down = {};
+    up[id] = true; down[id] = true;
+    while (changed) {
+      changed = false;
+      data.edges.forEach(function (e) {
+        if (up[e.from] && !up[e.to]) { up[e.to] = true; changed = true; }
+        if (down[e.to] && !down[e.from]) { down[e.from] = true; changed = true; }
+      });
+    }
+    Object.keys(up).forEach(function (k) { set[k] = true; });
+    Object.keys(down).forEach(function (k) { set[k] = true; });
+    return set;
+  }
+
+  function sub(c) {
+    if (c.kind === "namespace") {
+      var bits = [];
+      if (c.pods) bits.push(c.pods.ready + "/" + c.pods.total + " pods ready");
+      if (c.apps && c.apps.length) bits.push(c.apps.length + (c.apps.length === 1 ? " app" : " apps"));
+      return bits.join(" · ") || "no pods";
+    }
+    if (c.kind === "node") return (c.notes && c.notes[0]) || "node";
+    if (c.kind === "frontdoor") return (c.notes && c.notes[0]) || "front door";
+    return (c.notes && c.notes[0]) || c.kind;
+  }
+
+  function render() {
+    if (!data) return;
+    var bad = onlyBad.checked;
+    var t = new Date(data.generated);
+    document.getElementById("meta").textContent = "updated " + t.toLocaleTimeString() + " · refreshes every 30s";
+    var counts = document.getElementById("counts"); counts.textContent = "";
+    order.forEach(function (s) {
+      if (data.summary[s]) counts.appendChild(el("span", "pill " + s, data.summary[s] + " " + label[s]));
+    });
+    var banner = document.getElementById("banner"); banner.textContent = "";
+    if (data.causes && data.causes.length) {
+      var box = el("div", "causes");
+      box.appendChild(el("b", null, "Likely causes"));
+      var ul = el("ul");
+      data.causes.forEach(function (c) { ul.appendChild(el("li", null, c)); });
+      box.appendChild(ul); banner.appendChild(box);
+    } else if (!data.summary.red) {
+      banner.appendChild(el("div", "ok", "Nothing is down."));
+    }
+    document.getElementById("errors").textContent =
+      (data.errors && data.errors.length) ? "Could not read: " + data.errors.join("; ") : "";
+
+    var tiers = document.getElementById("tiers"); tiers.textContent = "";
+    var lit = selected ? neighbours(selected) : null;
+    tiers.className = lit ? "dim" : "";
+    data.tiers.forEach(function (tier) {
+      var comps = tier.components.filter(function (c) {
+        return !bad || c.status === "red" || c.status === "amber" || c.status === "unknown" || c.id === selected;
+      });
+      comps.sort(function (a, b) { return order.indexOf(a.status) - order.indexOf(b.status) || a.name.localeCompare(b.name); });
+      if (!comps.length && bad) return;
+      var sec = el("section", "tier");
+      sec.appendChild(el("h2", null, tier.name));
+      var row = el("div", "row");
+      if (!comps.length) row.appendChild(el("div", "empty", "none"));
+      comps.forEach(function (c) {
+        var card = el("div", "card " + c.status);
+        card.tabIndex = 0;
+        card.dataset.id = c.id;
+        card.setAttribute("role", "button");
+        card.setAttribute("aria-label", c.name + ": " + label[c.status]);
+        if (lit && lit[c.id]) card.className += " lit";
+        if (c.id === selected) card.className += " sel";
+        card.appendChild(el("div", "name", c.name));
+        card.appendChild(el("div", "sub", sub(c)));
+        if (c.reasons && c.reasons.length) card.appendChild(el("div", "why", c.reasons[0]));
+        card.addEventListener("click", function () { select(c.id); });
+        card.addEventListener("keydown", function (e) { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); select(c.id); } });
+        row.appendChild(card);
+      });
+      sec.appendChild(row); tiers.appendChild(sec);
+    });
+    wires();
+    detail();
+  }
+
+  function find(id) {
+    for (var i = 0; i < data.tiers.length; i++)
+      for (var j = 0; j < data.tiers[i].components.length; j++)
+        if (data.tiers[i].components[j].id === id) return data.tiers[i].components[j];
+    return null;
+  }
+
+  function wires() {
+    var svg = document.getElementById("wires");
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    if (!selected) return;
+    var main = document.getElementById("main").getBoundingClientRect();
+    function centre(id, top) {
+      var c = document.querySelector('.card[data-id="' + CSS.escape(id) + '"]');
+      if (!c) return null;
+      var r = c.getBoundingClientRect();
+      return { x: r.left - main.left + r.width / 2, y: (top ? r.top : r.bottom) - main.top };
+    }
+    var lit = neighbours(selected);
+    data.edges.forEach(function (e) {
+      if (!lit[e.from] || !lit[e.to]) return;
+      var a = centre(e.from, true), b = centre(e.to, false);
+      if (!a || !b) return;
+      var l = document.createElementNS("http://www.w3.org/2000/svg", "line");
+      l.setAttribute("x1", a.x); l.setAttribute("y1", a.y); l.setAttribute("x2", b.x); l.setAttribute("y2", b.y);
+      svg.appendChild(l);
+    });
+  }
+
+  function list(parent, title, items) {
+    if (!items || !items.length) return;
+    parent.appendChild(el("div", "k", title));
+    var ul = el("ul");
+    items.forEach(function (i) { ul.appendChild(el("li", null, i)); });
+    parent.appendChild(ul);
+  }
+
+  function detail() {
+    var aside = document.getElementById("detail"), body = document.getElementById("detailBody");
+    var c = selected && find(selected);
+    if (!c) { aside.className = ""; return; }
+    body.textContent = "";
+    body.appendChild(el("h3", null, c.name));
+    body.appendChild(el("span", "pill " + c.status, label[c.status]));
+    list(body, "Why", c.reasons);
+    list(body, "Notes", c.notes);
+    if (c.pods) list(body, "Pods", [c.pods.ready + " of " + c.pods.total + " ready"]);
+    list(body, "Runs on", c.nodes);
+    list(body, "ArgoCD apps", (c.apps || []).map(function (a) { return a.name + " — " + a.sync + " / " + a.health; }));
+    if (c.target) list(body, "Probe target", [c.target]);
+    if (c.last) {
+      body.appendChild(el("div", "k", "Latest Warden investigation"));
+      var p = el("div"); p.appendChild(el("code", null, c.last.id));
+      p.appendChild(document.createTextNode(" " + c.last.alert + " · " + new Date(c.last.ts).toLocaleString()));
+      body.appendChild(p);
+    }
+    if (c.kind === "host" && data.recent && data.recent.length) {
+      list(body, "Recent cluster-wide investigations", data.recent.map(function (r) {
+        return r.alert + " · " + new Date(r.ts).toLocaleTimeString() + " (" + r.id + ")";
+      }));
+    }
+    aside.className = "open";
+  }
+
+  function select(id) { selected = selected === id ? null : id; render(); }
+  document.querySelector("aside .close").addEventListener("click", function () { selected = null; render(); });
+  document.addEventListener("keydown", function (e) { if (e.key === "Escape") { selected = null; render(); } });
+  onlyBad.addEventListener("change", function () {
+    try { localStorage.setItem("warden.onlyBad", onlyBad.checked ? "1" : "0"); } catch (e) {}
+    render();
+  });
+  window.addEventListener("resize", wires);
+
+  function load() {
+    fetch("map.json", { cache: "no-store" }).then(function (r) {
+      if (!r.ok) throw new Error("HTTP " + r.status);
+      return r.json();
+    }).then(function (d) { data = d; render(); }).catch(function (e) {
+      document.getElementById("meta").textContent = "could not load the map: " + e.message + " — retrying";
+    });
+  }
+  load();
+  setInterval(load, 30000);
+})();
+</script>
+</body>
+</html>
