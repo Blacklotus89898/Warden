@@ -52,8 +52,15 @@ redacted, truncated digest goes to ntfy topic `warden`.
 
 ## Status map
 
-`/map` shows every node, namespace and front door with one status each
-(red / amber / green, grey = suspended on purpose), worst first, plus a
+`/map` is a nested graph, like mermaid subgraphs: the Proxmox host box holds
+the node boxes, each node holds Platform / Observability / Apps groups, each
+group holds the namespaces with pods on that node, and each namespace shows
+its ArgoCD apps and one dot per pod. A namespace on two nodes appears in both,
+coloured by its pods *on that node*. Front doors sit above the host; arrows
+into their namespace are drawn for failing doors and the selection ("show
+all links" draws every one). Pods no node will take get their own "not
+placed" box. A List view (cards by tier) is one click away. Statuses are
+red / amber / green, grey = suspended on purpose, worst first, plus a
 "likely causes" banner. A namespace on a NotReady node is red *because of the
 node*, so the node is named as the cause and its namespaces are not.
 Clicking a box draws its dependency lines and shows why, its ArgoCD apps,

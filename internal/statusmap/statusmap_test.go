@@ -123,6 +123,9 @@ func TestHealthyClusterHasNoCauses(t *testing.T) {
 	if comp(m, "ns/petal").Status != Amber {
 		t.Errorf("OutOfSync = amber; got %s", comp(m, "ns/petal").Status)
 	}
+	if pl := comp(m, "ns/kube-system").PodList; len(pl) != 1 || pl[0].Status != Green {
+		t.Errorf("one live green pod dot (the finished Job is left out): %+v", pl)
+	}
 	if p := comp(m, "ns/kube-system").Pods; p == nil || p.Total != 1 {
 		t.Errorf("finished Job pods are not counted: %+v", p)
 	}
@@ -137,6 +140,10 @@ func TestCrashLoopIsARootCause(t *testing.T) {
 	}
 	if len(m.Causes) != 1 || !strings.HasPrefix(m.Causes[0], "kavita: kavita-1/c: CrashLoopBackOff") {
 		t.Fatalf("causes = %v", m.Causes)
+	}
+	pl := comp(m, "ns/kavita").PodList
+	if len(pl) != 1 || pl[0].Status != Red || pl[0].Node != "k3s-worker-01" || pl[0].Reason != "c: CrashLoopBackOff" {
+		t.Errorf("pod dot = %+v; want red on k3s-worker-01 with its reason", pl)
 	}
 }
 

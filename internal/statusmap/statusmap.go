@@ -88,9 +88,18 @@ type Component struct {
 	Notes   []string       `json:"notes,omitempty"`
 	Apps    []App          `json:"apps,omitempty"`
 	Pods    *PodCount      `json:"pods,omitempty"`
-	Nodes   []string       `json:"nodes,omitempty"` // namespace: where its pods run
+	PodList []PodDot       `json:"podList,omitempty"` // namespace: each live pod
+	Nodes   []string       `json:"nodes,omitempty"`   // namespace: where its pods run
 	Target  string         `json:"target,omitempty"`
 	Last    *Investigation `json:"last,omitempty"`
+}
+
+// PodDot is one live pod: where it runs and how it is doing.
+type PodDot struct {
+	Name   string `json:"name"`
+	Node   string `json:"node,omitempty"`
+	Status Status `json:"status"`
+	Reason string `json:"reason,omitempty"`
 }
 
 // PodCount summarises a namespace's live pods.
@@ -278,9 +287,21 @@ func (b *Builder) Build(ctx context.Context) (*Map, error) {
 				continue // finished Job pods are history, not health
 			}
 			pc.Total++
+			pd := PodDot{Name: p.Metadata.Name, Node: p.Spec.NodeName, Status: Green}
+			// flag marks the pod and folds it into the namespace; sep joins pod
+			// name and reason ("/" for a container, ": " for the pod itself).
+			flag := func(s Status, sep, why string) {
+				pd.Status = worst(pd.Status, s)
+				if pd.Reason == "" || s == Red {
+					pd.Reason = why
+				}
+				c.Status = worst(c.Status, s)
+				c.Reasons = appendOnce(c.Reasons, p.Metadata.Name+sep+why)
+			}
 			if p.Spec.NodeName != "" {
 				onNode[p.Spec.NodeName] = true
 				if nodeStatus[p.Spec.NodeName] == Red {
+					pd.Status, pd.Reason = Red, "node NotReady"
 					c.Status = Red
 					c.Reasons = appendOnce(c.Reasons, "runs on "+p.Spec.NodeName+", which is NotReady")
 				}
@@ -296,25 +317,22 @@ func (b *Builder) Build(ctx context.Context) (*Map, error) {
 			}
 			for _, cs := range p.Status.ContainerStatuses {
 				if w := cs.State.Waiting; w != nil && redWaiting[w.Reason] {
-					c.Status = Red
-					c.Reasons = appendOnce(c.Reasons, fmt.Sprintf("%s/%s: %s", p.Metadata.Name, cs.Name, w.Reason))
+					flag(Red, "/", cs.Name+": "+w.Reason)
 				}
 			}
 			switch {
 			case p.Status.Phase == "Pending" && now.Sub(p.Metadata.CreationTimestamp) > PendingGrace:
-				c.Status = worst(c.Status, Red)
-				c.Reasons = appendOnce(c.Reasons, p.Metadata.Name+": Pending > 5m")
+				flag(Red, ": ", "Pending > 5m")
 			case p.Status.Phase == "Pending":
-				c.Status = worst(c.Status, Amber)
-				c.Reasons = appendOnce(c.Reasons, p.Metadata.Name+": starting")
+				flag(Amber, ": ", "starting")
 			case p.Status.Phase == "Running" && !podReady:
-				c.Status = worst(c.Status, Amber)
-				c.Reasons = appendOnce(c.Reasons, p.Metadata.Name+": not ready")
+				flag(Amber, ": ", "not ready")
 			case p.Status.Phase == "Unknown":
-				c.Status = worst(c.Status, Red)
-				c.Reasons = appendOnce(c.Reasons, p.Metadata.Name+": status Unknown (node lost)")
+				flag(Red, ": ", "status Unknown (node lost)")
 			}
+			c.PodList = append(c.PodList, pd)
 		}
+		sort.Slice(c.PodList, func(i, j int) bool { return c.PodList[i].Name < c.PodList[j].Name })
 		if pc.Total > 0 {
 			c.Pods = pc
 		}
