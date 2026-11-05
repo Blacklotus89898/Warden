@@ -16,11 +16,13 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/Blacklotus89898/Warden/internal/alert"
 	"github.com/Blacklotus89898/Warden/internal/investigate"
 	"github.com/Blacklotus89898/Warden/internal/journal"
+	"github.com/Blacklotus89898/Warden/internal/statusmap"
 )
 
 // Journal kinds.
@@ -51,9 +53,18 @@ type Server struct {
 	DailyCap int // investigations per UTC day (default 40)
 	Log      *slog.Logger
 	Version  string
+	Map      *statusmap.Builder // nil = no /map
 
 	queue chan job
+
+	mapMu   sync.Mutex
+	mapAt   time.Time
+	mapLast []byte
 }
+
+// MapTTL bounds how often the map re-reads the cluster (~30 GETs a build),
+// however many browsers have it open.
+const MapTTL = 15 * time.Second
 
 type job struct {
 	id string
@@ -206,6 +217,31 @@ func (s *Server) Routes(mux *http.ServeMux) {
 		}
 		writeJSON(w, evs)
 	})
+	// Status map (read-only): the page, and the JSON it polls. Exposed on
+	// the gateway by path prefix /map only — /investigations stays in-cluster.
+	mux.HandleFunc("GET /map", func(w http.ResponseWriter, r *http.Request) {
+		if s.Map == nil {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.Header().Set("Content-Security-Policy", "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'")
+		_, _ = w.Write(statusmap.Page)
+	})
+	mux.HandleFunc("GET /map.json", func(w http.ResponseWriter, r *http.Request) {
+		if s.Map == nil {
+			http.NotFound(w, r)
+			return
+		}
+		b, err := s.mapJSON(r.Context())
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadGateway)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Cache-Control", "no-store")
+		_, _ = w.Write(b)
+	})
 	mux.HandleFunc("GET /metrics", func(w http.ResponseWriter, r *http.Request) {
 		counts, err := s.J.Counts(r.Context())
 		if err != nil {
@@ -231,6 +267,42 @@ func (s *Server) Routes(mux *http.ServeMux) {
 		w.Header().Set("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
 		_, _ = w.Write([]byte(b.String()))
 	})
+}
+
+// mapJSON builds (or reuses, within MapTTL) the encoded status map with each
+// namespace's latest investigation attached.
+func (s *Server) mapJSON(ctx context.Context) ([]byte, error) {
+	s.mapMu.Lock()
+	defer s.mapMu.Unlock()
+	if s.mapLast != nil && time.Since(s.mapAt) < MapTTL {
+		return s.mapLast, nil
+	}
+	bctx, cancel := context.WithTimeout(ctx, 20*time.Second)
+	defer cancel()
+	m, err := s.Map.Build(bctx)
+	if err != nil {
+		return nil, err
+	}
+	if evs, err := s.J.List(ctx, KindInvestigated, 100); err == nil {
+		seen := make([]statusmap.Seen, 0, len(evs))
+		for _, e := range evs {
+			var b investigate.Bundle
+			if json.Unmarshal(e.Payload, &b) != nil {
+				continue
+			}
+			seen = append(seen, statusmap.Seen{
+				Investigation: statusmap.Investigation{ID: b.ID, Alert: b.Alert.Name(), TS: e.TS},
+				Namespace:     b.Namespace,
+			})
+		}
+		m.Attach(seen)
+	}
+	out, err := json.Marshal(m)
+	if err != nil {
+		return nil, err
+	}
+	s.mapLast, s.mapAt = out, time.Now()
+	return out, nil
 }
 
 func writeJSON(w http.ResponseWriter, v any) {

@@ -24,6 +24,7 @@ import (
 	"github.com/Blacklotus89898/Warden/internal/kube"
 	"github.com/Blacklotus89898/Warden/internal/notify"
 	"github.com/Blacklotus89898/Warden/internal/server"
+	"github.com/Blacklotus89898/Warden/internal/statusmap"
 	"github.com/Blacklotus89898/Warden/internal/vm"
 )
 
@@ -63,13 +64,23 @@ func main() {
 	}
 	enabled := envOr("WARDEN_ENABLED", "true") != "false"
 	daily, _ := strconv.Atoi(envOr("WARDEN_DAILY_CAP", "40"))
+	metrics := &vm.Client{Base: envOr("WARDEN_VM_URL", "http://vmsingle-vmstack.monitoring.svc:8428")}
+	// "label=namespace,…": front-door hosts whose first label is neither a
+	// namespace nor an app name (grafana.lab.home → monitoring).
+	hosts := map[string]string{}
+	for _, kv := range strings.Split(envOr("WARDEN_MAP_HOSTS", ""), ",") {
+		if l, ns, ok := strings.Cut(strings.TrimSpace(kv), "="); ok {
+			hosts[l] = ns
+		}
+	}
 	srv := &server.Server{
 		J: j, Enabled: enabled, DailyCap: daily, Log: logger, Version: version,
 		Runner: &investigate.Investigator{
 			Kube:    kc,
-			Metrics: &vm.Client{Base: envOr("WARDEN_VM_URL", "http://vmsingle-vmstack.monitoring.svc:8428")},
+			Metrics: metrics,
 			KB:      &kb.Index{Roots: roots},
 		},
+		Map:    &statusmap.Builder{Kube: kc, Metrics: metrics, Hosts: hosts},
 		Notify: notify.Ntfy{URL: os.Getenv("WARDEN_NTFY_URL"), Topic: envOr("WARDEN_NTFY_TOPIC", "warden")},
 	}
 	srv.Start(ctx)
