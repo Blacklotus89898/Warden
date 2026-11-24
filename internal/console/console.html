@@ -1,0 +1,488 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Warden console</title>
+<style>
+:root {
+  --bg: #f6f7f9; --panel: #ffffff; --sunk: #f1f3f6; --ink: #1c2330; --muted: #5d6878; --line: #d5dae2;
+  --red: #d64545; --red-bg: #fdecec; --amber: #c98a12; --amber-bg: #fdf4e1;
+  --green: #2f9e62; --green-bg: #e8f6ee; --grey: #8a93a3; --grey-bg: #eef0f3;
+  --unknown: #7a5cc9; --unknown-bg: #f0ebfb; --focus: #2d6cdf;
+  --s1: #2d6cdf; --s2: #2f9e62; --s3: #c98a12; --s4: #d64545; --s5: #7a5cc9;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #12151b; --panel: #1b2029; --sunk: #161a22; --ink: #e6e9ef; --muted: #98a2b3; --line: #343c4a;
+    --red: #f06a6a; --red-bg: #3a1f22; --amber: #e3a93a; --amber-bg: #3a2f1a;
+    --green: #4cc184; --green-bg: #1a3227; --grey: #8a93a3; --grey-bg: #252a33;
+    --unknown: #a68cf0; --unknown-bg: #2a2340; --focus: #6d9cf5;
+    --s1: #6d9cf5; --s2: #4cc184; --s3: #e3a93a; --s4: #f06a6a; --s5: #a68cf0;
+  }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--ink); font: 14px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+a { color: var(--focus); text-decoration: none; } a:hover { text-decoration: underline; }
+header { padding: 10px 16px; display: flex; gap: 16px; align-items: center; flex-wrap: wrap;
+  border-bottom: 1px solid var(--line); background: var(--panel); position: sticky; top: 0; z-index: 5; }
+header h1 { font-size: 17px; margin: 0; }
+header nav { display: flex; gap: 14px; flex-wrap: wrap; }
+header .who { margin-left: auto; color: var(--muted); font-size: 12px; }
+main { padding: 16px; max-width: 1400px; margin: 0 auto; }
+h2 { font-size: 18px; margin: 4px 0 4px; } h3 { font-size: 14px; margin: 0 0 8px; }
+.sub { color: var(--muted); font-size: 12px; margin-bottom: 14px; }
+.grid { display: grid; gap: 14px; grid-template-columns: repeat(auto-fit, minmax(420px, 1fr)); }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; min-width: 0; }
+.card.full { grid-column: 1 / -1; }
+.muted { color: var(--muted); } .small { font-size: 12px; }
+.err { color: var(--unknown); font-size: 12px; margin: 6px 0; }
+.note { color: var(--muted); font-size: 12px; margin: 6px 0 0; }
+.pill { border-radius: 999px; padding: 1px 9px; font-weight: 600; font-size: 12px; white-space: nowrap; display: inline-block; }
+.red, .bad { background: var(--red-bg); color: var(--red); } .amber, .warn { background: var(--amber-bg); color: var(--amber); }
+.green { background: var(--green-bg); color: var(--green); } .grey, .info { background: var(--grey-bg); color: var(--muted); }
+.unknown { background: var(--unknown-bg); color: var(--unknown); }
+table { border-collapse: collapse; width: 100%; }
+th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
+th { font-size: 12px; color: var(--muted); font-weight: 600; background: var(--sunk); }
+tr:last-child td { border-bottom: 0; }
+.tw { overflow-x: auto; }
+pre { background: var(--sunk); border: 1px solid var(--line); border-radius: 6px; padding: 8px; margin: 6px 0;
+  overflow-x: auto; font: 12px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; white-space: pre-wrap; word-break: break-all; max-height: 340px; }
+code { font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; background: var(--sunk); padding: 0 4px; border-radius: 4px; }
+form.row, .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: end; }
+label.f { display: flex; flex-direction: column; gap: 3px; font-size: 12px; color: var(--muted); }
+input, select, textarea, button { font: inherit; color: var(--ink); background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; }
+textarea { width: 100%; min-height: 90px; resize: vertical; }
+button { cursor: pointer; background: var(--focus); color: #fff; border-color: var(--focus); font-weight: 600; }
+button.ghost { background: var(--panel); color: var(--ink); border-color: var(--line); font-weight: 400; }
+button:disabled { opacity: .6; cursor: wait; }
+.seg { display: inline-flex; border: 1px solid var(--line); border-radius: 7px; overflow: hidden; }
+.seg button { border: 0; border-radius: 0; background: var(--panel); color: var(--muted); font-weight: 400; padding: 4px 10px; }
+.seg button[aria-pressed="true"] { background: var(--focus); color: #fff; }
+.tl { list-style: none; margin: 0; padding: 0; max-height: 620px; overflow-y: auto; }
+.tl li { display: grid; grid-template-columns: 92px 92px 1fr; gap: 8px; padding: 6px 2px; border-bottom: 1px solid var(--line); }
+.tl li:last-child { border-bottom: 0; }
+.tl li > .pill { align-self: start; justify-self: start; }
+.tl .when { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+.tl .detail { color: var(--muted); font-size: 12px; margin-top: 2px; white-space: pre-wrap; word-break: break-word; }
+.links { display: flex; flex-direction: column; gap: 4px; }
+.link { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.link .n { font-variant-numeric: tabular-nums; color: var(--muted); font-size: 12px; }
+.charts { display: grid; gap: 10px; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); }
+.chart { border: 1px solid var(--line); border-radius: 8px; padding: 8px; background: var(--sunk); }
+.chart .t { font-size: 12px; font-weight: 600; display: flex; justify-content: space-between; gap: 8px; }
+.chart .t .v { color: var(--muted); font-weight: 400; font-variant-numeric: tabular-nums; }
+.chart svg { width: 100%; height: 90px; display: block; }
+.chart .legend { display: flex; gap: 10px; flex-wrap: wrap; font-size: 11px; color: var(--muted); }
+.chart .legend i { display: inline-block; width: 10px; height: 3px; border-radius: 2px; margin-right: 4px; vertical-align: middle; }
+.kv { display: grid; grid-template-columns: max-content 1fr; gap: 2px 12px; font-size: 13px; }
+.kv dt { color: var(--muted); } .kv dd { margin: 0; word-break: break-word; }
+.diag { border-left: 3px solid var(--focus); padding: 4px 10px; margin: 8px 0; white-space: pre-wrap; }
+.diag .by { color: var(--muted); font-size: 12px; }
+.empty { color: var(--muted); font-size: 13px; padding: 6px 0; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Warden console</h1>
+  <nav>
+    <a href="#/">Investigations</a>
+    <a href="services">Services</a>
+    <a href="map">Status map</a>
+  </nav>
+  <span class="who" id="who"></span>
+</header>
+<main id="view"><p class="muted">loading…</p></main>
+<script>
+"use strict";
+// Everything from the API is untrusted (alert labels, events, log lines):
+// it is only ever placed with textContent, never as markup.
+const view = document.getElementById("view");
+function el(tag, cls, text) {
+  const e = document.createElement(tag);
+  if (cls) e.className = cls;
+  if (text !== undefined && text !== null) e.textContent = String(text);
+  return e;
+}
+function link(href, text) { const a = el("a", null, text); a.href = href; return a; }
+function safeURL(u) { try { const x = new URL(u, location.href); return (x.protocol === "https:" || x.protocol === "http:") ? x.href : null; } catch (_) { return null; } }
+function when(ts) { const d = new Date(ts); return isNaN(d) ? "" : d.toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }); }
+function ago(ts) {
+  const s = (Date.now() - new Date(ts)) / 1000;
+  if (s < 90) return Math.round(s) + "s ago"; if (s < 5400) return Math.round(s / 60) + "m ago";
+  if (s < 129600) return Math.round(s / 3600) + "h ago"; return Math.round(s / 86400) + "d ago";
+}
+async function api(path, opts) {
+  const r = await fetch("console/api/" + path, Object.assign({ cache: "no-store", credentials: "same-origin" }, opts || {}));
+  const text = await r.text();
+  if (!r.ok) throw new Error(r.status + ": " + text.trim());
+  return text ? JSON.parse(text) : null;
+}
+function write(path, body) {
+  return api(path, { method: "POST", body: JSON.stringify(body),
+    headers: { "Content-Type": "application/json", "X-Warden-Request": "1" } });
+}
+function card(title, cls) { const c = el("section", "card" + (cls ? " " + cls : "")); if (title) c.append(el("h3", null, title)); return c; }
+function errors(list) { const d = el("div"); for (const e of list || []) d.append(el("div", "err", "Could not read " + e)); return d; }
+function table(cols, rows) {
+  const w = el("div", "tw"), t = el("table"), h = el("tr");
+  for (const c of cols) h.append(el("th", null, c));
+  const th = el("thead"); th.append(h); t.append(th);
+  const tb = el("tbody"); for (const r of rows) tb.append(r); t.append(tb); w.append(t); return w;
+}
+function tr(cells) { const r = el("tr"); for (const c of cells) { const td = el("td"); if (c instanceof Node) td.append(c); else td.textContent = c == null ? "" : String(c); r.append(td); } return r; }
+function nsLink(ns) { return ns ? link("#/ns/" + encodeURIComponent(ns), ns) : el("span", "muted", "cluster-wide"); }
+function kbURL(p) {
+  if (!p) return null;
+  p = p.replace(/^kb:\/\//, "davinci/");
+  const [root, ...rest] = p.split("/");
+  const repo = root === "homelab" ? "Homelab" : root === "davinci" ? "DaVinci" : null;
+  return repo ? "https://github.com/Blacklotus89898/" + repo + "/blob/main/docs/" + rest.join("/") : null;
+}
+
+let svcCache = null;
+async function servicesView() {
+  if (svcCache && Date.now() - svcCache.at < 30000) return svcCache.v;
+  const r = await fetch("services.json", { cache: "no-store" });
+  const v = r.ok ? await r.json() : { services: [] };
+  svcCache = { at: Date.now(), v };
+  return v;
+}
+
+// ------------------------------------------------------------ home
+async function home() {
+  view.replaceChildren(el("h2", null, "Investigations"),
+    el("div", "sub", "Every investigation Warden ran: from an alert, or one you started. Open one to read its evidence and record your diagnosis."));
+  const grid = el("div", "grid");
+  const start = card("Investigate now");
+  start.append(el("div", "note", "Runs the same read-only collectors as an alert would (pods, logs, events, ArgoCD, nodes, knowledge base) on what you pick. Nothing is pushed to your phone."));
+  const f = el("form", "row"); f.style.marginTop = "10px";
+  const ns = el("input"); ns.name = "namespace"; ns.placeholder = "linkding"; ns.setAttribute("list", "nslist"); ns.autocomplete = "off";
+  const dl = el("datalist"); dl.id = "nslist";
+  const pod = el("input"); pod.name = "pod"; pod.placeholder = "optional";
+  const node = el("input"); node.name = "node"; node.placeholder = "optional";
+  const go = el("button", null, "Investigate"); go.type = "submit";
+  const l = (t, i) => { const x = el("label", "f", t); x.append(i); return x; };
+  f.append(l("Namespace", ns), dl, l("Pod", pod), l("Node", node), go);
+  const msg = el("div", "err");
+  f.addEventListener("submit", async (e) => {
+    e.preventDefault(); go.disabled = true; msg.textContent = "";
+    try {
+      const r = await write("investigate", { namespace: ns.value.trim(), pod: pod.value.trim(), node: node.value.trim() });
+      location.hash = "#/inv/" + r.id;
+    } catch (err) { msg.textContent = err.message; } finally { go.disabled = false; }
+  });
+  start.append(f, msg);
+  servicesView().then((v) => { for (const s of v.services || []) { const o = el("option"); o.value = s.namespace; dl.append(o); } }).catch(() => {});
+
+  const quick = card("Services needing a look");
+  servicesView().then((v) => {
+    const bad = (v.services || []).filter((s) => s.status !== "green");
+    if (!bad.length) { quick.append(el("div", "empty", "Everything on /services is green.")); return; }
+    for (const s of bad) {
+      const r = el("div", "link"); r.append(el("span", "pill " + s.status, s.status), nsLink(s.namespace));
+      if (s.flags) r.append(el("span", "muted small", s.flags.join(" · ")));
+      quick.append(r);
+    }
+  }).catch((e) => quick.append(el("div", "err", e.message)));
+  grid.append(start, quick);
+
+  const listCard = card(null, "full");
+  const filt = el("div", "row"); filt.style.marginBottom = "8px";
+  const seg = el("div", "seg"); let source = "all";
+  for (const s of ["all", "alert", "operator"]) {
+    const b = el("button", null, s === "operator" ? "started by you" : s === "alert" ? "from alerts" : "all");
+    b.type = "button"; b.setAttribute("aria-pressed", String(s === source));
+    b.onclick = () => { source = s; for (const x of seg.children) x.setAttribute("aria-pressed", "false"); b.setAttribute("aria-pressed", "true"); draw(); };
+    seg.append(b);
+  }
+  const q = el("input"); q.placeholder = "filter by namespace or alert"; q.oninput = () => draw();
+  const undiag = el("label", "f"); const cb = el("input"); cb.type = "checkbox"; cb.onchange = () => draw();
+  undiag.style.flexDirection = "row"; undiag.style.alignItems = "center"; undiag.append(cb, document.createTextNode(" not yet diagnosed"));
+  filt.append(seg, q, undiag);
+  const holder = el("div"); listCard.append(filt, holder);
+  grid.append(listCard);
+  view.append(grid);
+
+  let rows = [];
+  function draw() {
+    const term = q.value.trim().toLowerCase();
+    const sel = rows.filter((r) => (source === "all" || r.source === source) &&
+      (!term || (r.namespace || "").includes(term) || (r.alert || "").toLowerCase().includes(term)) && (!cb.checked || !r.diagnosed));
+    if (!sel.length) { holder.replaceChildren(el("div", "empty", rows.length ? "Nothing matches." : "No investigations yet.")); return; }
+    holder.replaceChildren(table(["When", "Source", "Alert", "Namespace", "Found", "Diagnosis"], sel.map((r) => {
+      const a = link("#/inv/" + r.id, r.alert || r.id);
+      const src = el("span", "pill " + (r.source === "operator" ? "info" : r.severity === "critical" ? "bad" : "warn"), r.source === "operator" ? "you" : r.severity || "alert");
+      const found = [];
+      if (r.problems) found.push(r.problems + " problem" + (r.problems > 1 ? "s" : ""));
+      if (r.errors) found.push(r.errors + " collector error" + (r.errors > 1 ? "s" : ""));
+      const nsCell = el("span"); nsCell.append(nsLink(r.namespace)); if (r.pod) nsCell.append(el("span", "muted small", " · " + r.pod));
+      return tr([el("span", null, when(r.ts)), src, a, nsCell, found.join(", ") || "–", r.diagnosed ? el("span", "pill green", "written") : el("span", "muted", "–")]);
+    })));
+  }
+  try { rows = await api("investigations?limit=300"); draw(); } catch (e) { holder.replaceChildren(el("div", "err", e.message)); }
+}
+
+// ------------------------------------------------------------ one investigation
+async function investigation(id) {
+  view.replaceChildren(el("p", "muted", "loading " + id + "…"));
+  let d;
+  try { d = await api("investigations/" + encodeURIComponent(id)); } catch (e) { view.replaceChildren(el("div", "err", e.message), link("#/", "← all investigations")); return; }
+  const b = d.bundle || {};
+  const a = b.alert || {}; const labels = a.labels || {}; const ann = a.annotations || {};
+  const head = el("div");
+  const back = link("#/", "← all investigations"); back.className = "small";
+  const title = el("h2", null, (labels.alertname || "investigation") + (b.namespace ? " · " + b.namespace : ""));
+  const sub = el("div", "sub");
+  sub.append(document.createTextNode(when(b.started || d.ts) + " (" + ago(b.started || d.ts) + ") · collected in " + (b.duration || "?") + " · "), el("code", null, id));
+  head.append(back, title, sub);
+  view.replaceChildren(head);
+  const grid = el("div", "grid");
+
+  const ac = card(labels.alertname === "OperatorRequest" ? "Your request" : "Alert");
+  const kv = el("dl", "kv");
+  const add = (k, v) => { if (v === undefined || v === null || v === "") return; kv.append(el("dt", null, k)); const dd = el("dd"); if (v instanceof Node) dd.append(v); else dd.textContent = v; kv.append(dd); };
+  add("Severity", labels.severity); add("Namespace", b.namespace ? nsLink(b.namespace) : null); add("Front door", b.door);
+  add("Pod", labels.pod); add("Node", labels.node); add("Summary", ann.summary); add("Description", ann.description);
+  const rb = b.runbook && (safeURL(b.runbook) || kbURL(b.runbook));
+  if (rb) add("Runbook", link(rb, b.runbook));
+  ac.append(kv);
+  const again = el("button", "ghost", "Investigate this again now"); again.style.marginTop = "10px";
+  again.onclick = async () => {
+    again.disabled = true;
+    try { const r = await write("investigate", { namespace: b.namespace || "", pod: labels.pod || "", node: labels.node || "" }); location.hash = "#/inv/" + r.id; }
+    catch (e) { again.after(el("div", "err", e.message)); } finally { again.disabled = false; }
+  };
+  if (b.namespace || labels.node) ac.append(again);
+  if (b.namespace) { const p = el("div", "note"); p.append(document.createTextNode("Open "), nsLink(b.namespace), document.createTextNode(" for what changed, blast radius and traffic.")); ac.append(p); }
+  ac.append(errors(Object.entries(b.errors || {}).map(([k, v]) => k + ": " + v)));
+  grid.append(ac);
+
+  const dc = card("Your diagnosis");
+  const diags = d.diagnoses || [];
+  if (!diags.length) dc.append(el("div", "empty", "None yet. What happened, why, and what fixed it? This becomes the record future investigations are compared against."));
+  for (const x of diags) { const q = el("div", "diag"); q.append(el("div", "by", x.by + " · " + when(x.ts)), el("div", null, x.text)); dc.append(q); }
+  const ta = el("textarea"); ta.placeholder = "Cause, evidence, fix. Secrets you paste are redacted.";
+  const save = el("button", null, "Add diagnosis"); save.style.marginTop = "6px";
+  const dmsg = el("div", "err");
+  save.onclick = async () => {
+    if (!ta.value.trim()) return; save.disabled = true; dmsg.textContent = "";
+    try { await write("investigations/" + encodeURIComponent(id) + "/diagnosis", { text: ta.value }); route(); }
+    catch (e) { dmsg.textContent = e.message; } finally { save.disabled = false; }
+  };
+  dc.append(ta, save, dmsg);
+  grid.append(dc);
+
+  const pc = card("Pods", "full");
+  if (!(b.pods || []).length) pc.append(el("div", "empty", b.namespace ? "No unhealthy pods found." : "Not scoped to a namespace."));
+  for (const p of b.pods || []) {
+    const h = el("div", "link");
+    h.append(el("span", "pill " + (p.ready ? "green" : "bad"), p.ready ? "ready" : p.phase || "not ready"), el("b", null, p.name),
+      el("span", "muted small", (p.node ? "on " + p.node + " · " : "") + p.restarts + " restarts"));
+    pc.append(h);
+    for (const pr of p.problems || []) pc.append(el("div", "small", "• " + pr));
+    for (const [c, lines] of Object.entries(p.logs || {})) {
+      pc.append(el("div", "muted small", c + " — last " + lines.length + " lines (redacted)"), el("pre", null, lines.join("\n")));
+    }
+  }
+  grid.append(pc);
+
+  const ec = card("Warning events (last 2h)");
+  if (!(b.events || []).length) ec.append(el("div", "empty", "None."));
+  else ec.append(table(["Last", "Object", "Reason", "Message"], b.events.map((e) => tr([when(e.last), e.object, e.reason + (e.count > 1 ? " ×" + e.count : ""), e.message]))));
+  grid.append(ec);
+
+  const ap = card("ArgoCD");
+  if (!(b.apps || []).length) ap.append(el("div", "empty", "No application data."));
+  else ap.append(table(["App", "Sync", "Health", "Message"], b.apps.map((x) => tr([x.name, el("span", "pill " + (x.sync === "Synced" ? "green" : "warn"), x.sync),
+    el("span", "pill " + (x.health === "Healthy" ? "green" : x.health === "Degraded" || x.health === "Missing" ? "bad" : "warn"), x.health),
+    [x.message].concat(x.conditions || []).filter(Boolean).join(" · ")]))));
+  if ((b.nodes || []).length) {
+    ap.append(el("h3", null, "Nodes")); ap.lastChild.style.marginTop = "12px";
+    ap.append(table(["Node", "Ready", "Notes"], b.nodes.map((n) => tr([n.name, el("span", "pill " + (n.ready ? "green" : "bad"), n.ready ? "Ready" : "NotReady"),
+      [n.cordoned ? "cordoned" : ""].concat(n.pressure || []).filter(Boolean).join(", ")]))));
+  }
+  grid.append(ap);
+
+  const mc = card("The alert's metric now");
+  if (b.expr) mc.append(el("pre", null, b.expr));
+  if ((b.metric || []).length) mc.append(table(["Series", "Value"], b.metric.map((s) => tr([Object.entries(s.labels || {}).filter(([k]) => k !== "__name__").map(([k, v]) => k + "=" + v).join(", "), s.value]))));
+  else mc.append(el("div", "empty", b.expr ? "Returns nothing now (resolved?)." : "No expression on this alert."));
+  grid.append(mc);
+
+  const kc = card("Knowledge base");
+  if (!(b.kb || []).length) kc.append(el("div", "empty", "No matching runbook or solution."));
+  for (const h of b.kb || []) { const u = kbURL(h.path); const r = el("div", "link"); r.append(u ? link(u, h.heading || h.path) : el("span", null, h.heading || h.path), el("span", "muted small", h.path)); kc.append(r); }
+  grid.append(kc);
+
+  const tc = card("Journal trail");
+  if (!(d.trail || []).length) tc.append(el("div", "empty", "–"));
+  for (const t of d.trail || []) tc.append(el("div", "small", when(t.ts) + " · " + t.kind));
+  grid.append(tc);
+  view.append(grid);
+}
+
+// ------------------------------------------------------------ namespace
+async function namespace(ns) {
+  const head = el("div");
+  const back = link("#/", "← investigations"); back.className = "small";
+  head.append(back, el("h2", null, ns));
+  const sub = el("div", "sub", "What changed, what depends on it, and its traffic. Read-only."); head.append(sub);
+  view.replaceChildren(head);
+  const grid = el("div", "grid");
+
+  const sc = card("Now");
+  servicesView().then((v) => {
+    const s = (v.services || []).find((x) => x.namespace === ns);
+    if (!s) { sc.append(el("div", "empty", "Not an ArgoCD-deployed namespace.")); return; }
+    const r = el("div", "link"); r.append(el("span", "pill " + s.status, s.status), el("span", "muted small", (s.apps || []).join(", "))); sc.append(r);
+    for (const f of s.flags || []) sc.append(el("div", "small", "• " + f));
+    const g = s.signals || {}; const kv = el("dl", "kv"); kv.style.marginTop = "8px";
+    const pct = (x) => x == null ? "–" : (x * 100).toFixed(1) + "%";
+    for (const [k, v2] of [["Traffic", g.trafficRps == null ? "–" : g.trafficRps.toFixed(3) + "/s"], ["5xx", pct(g.errorShare)],
+      ["p95", g.latencyP95Ms == null ? "–" : Math.round(g.latencyP95Ms) + " ms"], ["CPU / limit", pct(g.cpuOfLimit)], ["Memory / limit", pct(g.memoryOfLimit)]]) {
+      kv.append(el("dt", null, k), el("dd", null, v2));
+    }
+    sc.append(kv);
+    for (const m of s.monitors || []) { const x = el("div", "link small"); x.append(el("span", "pill " + (m.state === "up" ? "green" : m.state === "down" ? "bad" : "warn"), m.state), el("span", null, m.name)); sc.append(x); }
+    const btn = el("button", "ghost", "Investigate " + ns + " now"); btn.style.marginTop = "10px";
+    btn.onclick = async () => { btn.disabled = true; try { const r2 = await write("investigate", { namespace: ns }); location.hash = "#/inv/" + r2.id; } catch (e) { btn.after(el("div", "err", e.message)); } finally { btn.disabled = false; } };
+    sc.append(btn);
+  }).catch((e) => sc.append(el("div", "err", e.message)));
+  grid.append(sc);
+
+  const bc = card("Blast radius"); bc.append(el("p", "muted", "loading…"));
+  grid.append(bc);
+  api("namespaces/" + encodeURIComponent(ns) + "/blast").then((b) => {
+    bc.replaceChildren(el("h3", null, "Blast radius"));
+    const side = (title, list, empty) => {
+      bc.append(el("div", "small", title));
+      const box = el("div", "links"); box.style.margin = "4px 0 10px";
+      if (!list.length) box.append(el("div", "empty", empty));
+      for (const l of list) {
+        const r = el("div", "link");
+        r.append(el("span", "pill " + (l.status || "grey"), l.status || "?"), nsLink(l.namespace));
+        const n = []; if (l.requests) n.push(Math.round(l.requests) + " req"); if (l.connections) n.push(Math.round(l.connections) + " conns");
+        r.append(el("span", "n", n.join(" · ") + " / " + b.window));
+        box.append(r);
+      }
+      bc.append(box);
+    };
+    side("If " + ns + " breaks, these call it:", b.callers || [], "Nothing in the mesh called it in the last " + b.window + ".");
+    side(ns + " calls these, so it breaks with them:", b.callees || [], "It called nothing in the mesh in the last " + b.window + ".");
+    const kv = el("dl", "kv");
+    kv.append(el("dt", null, "Front door"), el("dd", null, b.gateway ? "yes: users reach it through *.lab.home" : "no gateway traffic seen"));
+    kv.append(el("dt", null, "Runs on"), el("dd", null, (b.nodes || []).join(", ") || "no pods"));
+    bc.append(kv, errors(b.errors));
+    for (const n of b.notes || []) bc.append(el("div", "note", n));
+  }).catch((e) => bc.replaceChildren(el("h3", null, "Blast radius"), el("div", "err", e.message)));
+
+  const tc = card("What changed", "full");
+  const hsel = el("div", "seg"); let hours = 24;
+  const tlBox = el("div");
+  for (const h of [6, 24, 72, 168]) {
+    const b = el("button", null, h < 48 ? h + "h" : h / 24 + "d"); b.type = "button"; b.setAttribute("aria-pressed", String(h === hours));
+    b.onclick = () => { hours = h; for (const x of hsel.children) x.setAttribute("aria-pressed", "false"); b.setAttribute("aria-pressed", "true"); loadTL(); };
+    hsel.append(b);
+  }
+  const th = el("div", "row"); th.style.justifyContent = "space-between"; th.style.marginBottom = "8px"; th.append(el("h3", null, "What changed"), hsel);
+  tc.replaceChildren(th, tlBox);
+  async function loadTL() {
+    tlBox.replaceChildren(el("p", "muted", "loading…"));
+    try {
+      const t = await api("namespaces/" + encodeURIComponent(ns) + "/timeline?hours=" + hours);
+      const ul = el("ul", "tl");
+      if (!t.entries.length) ul.append(el("li", "empty", "Nothing recorded in this window."));
+      for (const e of t.entries) {
+        const li = el("li");
+        const w = el("div", "when", when(e.at)); w.title = e.at;
+        const body = el("div"); const tt = el("div", null, e.title);
+        if (e.ref) { tt.append(document.createTextNode(" ")); tt.append(link("#/inv/" + e.ref, "open")); }
+        body.append(tt); if (e.detail) body.append(el("div", "detail", e.detail));
+        li.append(w, el("span", "pill " + e.level, e.kind), body); ul.append(li);
+      }
+      tlBox.replaceChildren(ul, errors(t.errors));
+      for (const n of t.notes || []) tlBox.append(el("div", "note", n));
+    } catch (e) { tlBox.replaceChildren(el("div", "err", e.message)); }
+  }
+  loadTL();
+  grid.append(tc);
+
+  const fc = card("Traffic", "full");
+  const rsel = el("div", "seg"); let rng = "24h";
+  const chBox = el("div");
+  for (const r of ["1h", "6h", "24h", "7d"]) {
+    const b = el("button", null, r); b.type = "button"; b.setAttribute("aria-pressed", String(r === rng));
+    b.onclick = () => { rng = r; for (const x of rsel.children) x.setAttribute("aria-pressed", "false"); b.setAttribute("aria-pressed", "true"); loadTR(); };
+    rsel.append(b);
+  }
+  const gf = link("https://grafana.lab.home/d/service-health", "Grafana: Service health →"); gf.className = "small";
+  const fh = el("div", "row"); fh.style.justifyContent = "space-between"; fh.style.marginBottom = "8px";
+  const left = el("div", "row"); left.append(el("h3", null, "Traffic"), rsel); fh.append(left, gf);
+  fc.replaceChildren(fh, chBox);
+  async function loadTR() {
+    chBox.replaceChildren(el("p", "muted", "loading…"));
+    try {
+      const t = await api("namespaces/" + encodeURIComponent(ns) + "/traffic?range=" + rng);
+      const g = el("div", "charts");
+      const panels = [
+        ["requests", "Requests/s by status", (v) => v.toFixed(3) + "/s", (s) => s.labels.class || "all"],
+        ["errors", "5xx share", (v) => (v * 100).toFixed(1) + "%"],
+        ["latencyP95", "Latency p95", (v) => Math.round(v) + " ms"],
+        ["cpu", "CPU / limit (busiest container)", (v) => (v * 100).toFixed(1) + "%"],
+        ["memory", "Memory / limit (fullest container)", (v) => (v * 100).toFixed(1) + "%"],
+        ["restarts", "Restarts", (v) => v.toFixed(0)],
+      ];
+      for (const [k, name, fmt, lab] of panels) g.append(chart(name, t.series[k] || [], fmt, lab));
+      chBox.replaceChildren(g, errors(t.errors), el("div", "note", "Traffic, 5xx and p95 are what the Istio gateway sees: empty for services without a *.lab.home route. Step " + t.step + "."));
+    } catch (e) { chBox.replaceChildren(el("div", "err", e.message)); }
+  }
+  loadTR();
+  grid.append(fc);
+  view.append(grid);
+}
+
+const SVGNS = "http://www.w3.org/2000/svg";
+function chart(title, series, fmt, labelOf) {
+  const c = el("div", "chart"); const t = el("div", "t"); t.append(el("span", null, title));
+  const pts = series.flatMap((s) => s.points || []);
+  if (!pts.length) { t.append(el("span", "v", "no data")); c.append(t); return c; }
+  const xs = pts.map((p) => p[0]), ys = pts.map((p) => p[1]);
+  const x0 = Math.min(...xs), x1 = Math.max(...xs), y1 = Math.max(...ys, 0) || 1;
+  // "now" and "max" are of the total across series, so they agree.
+  const tot = new Map();
+  for (const s of series) for (const p of s.points || []) tot.set(p[0], (tot.get(p[0]) || 0) + p[1]);
+  const keys = [...tot.keys()].sort((a, b) => a - b);
+  const now = keys.length ? tot.get(keys[keys.length - 1]) : 0, peak = Math.max(...tot.values());
+  t.append(el("span", "v", "now " + fmt(now) + " · max " + fmt(peak)));
+  const svg = document.createElementNS(SVGNS, "svg"); svg.setAttribute("viewBox", "0 0 300 90"); svg.setAttribute("preserveAspectRatio", "none");
+  const colors = ["var(--s1)", "var(--s2)", "var(--s3)", "var(--s4)", "var(--s5)"];
+  const legend = el("div", "legend");
+  series.forEach((s, i) => {
+    const d = (s.points || []).map((p, j) => (j ? "L" : "M") + (((p[0] - x0) / ((x1 - x0) || 1)) * 298 + 1).toFixed(1) + " " + (88 - (p[1] / y1) * 84).toFixed(1)).join(" ");
+    const path = document.createElementNS(SVGNS, "path");
+    path.setAttribute("d", d); path.setAttribute("fill", "none"); path.setAttribute("stroke", colors[i % colors.length]);
+    path.setAttribute("stroke-width", "1.5"); path.setAttribute("vector-effect", "non-scaling-stroke");
+    svg.append(path);
+    if (labelOf && series.length > 1) { const lg = el("span"); const sw = el("i"); sw.style.background = colors[i % colors.length]; lg.append(sw, document.createTextNode(labelOf(s))); legend.append(lg); }
+  });
+  c.append(t, svg); if (legend.children.length) c.append(legend);
+  return c;
+}
+
+// ------------------------------------------------------------ router
+function route() {
+  const h = location.hash.replace(/^#\/?/, "");
+  const [kind, arg] = h.split("/");
+  window.scrollTo(0, 0);
+  if (kind === "inv" && arg) return investigation(decodeURIComponent(arg));
+  if (kind === "ns" && arg) return namespace(decodeURIComponent(arg));
+  return home();
+}
+window.addEventListener("hashchange", route);
+api("whoami").then((w) => { document.getElementById("who").textContent = (w.user ? "signed in as " + w.user : "not signed in") + (w.enabled ? "" : " · WARDEN_ENABLED=false"); }).catch(() => {});
+route();
+</script>
+</body>
+</html>

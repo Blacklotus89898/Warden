@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/Blacklotus89898/Warden/internal/alert"
+	"github.com/Blacklotus89898/Warden/internal/console"
 	"github.com/Blacklotus89898/Warden/internal/investigate"
 	"github.com/Blacklotus89898/Warden/internal/journal"
 	"github.com/Blacklotus89898/Warden/internal/redact"
@@ -52,7 +53,7 @@ const (
 
 // Notifier sends the digest (notify.Ntfy implements it).
 type Notifier interface {
-	Send(ctx context.Context, title, body, priority string) error
+	Send(ctx context.Context, title, body, priority, click string) error
 }
 
 // Runner investigates one alert (investigate.Investigator implements it).
@@ -72,6 +73,13 @@ type Server struct {
 	Version  string
 	Map      *statusmap.Builder // nil = no /map
 	Services *services.Builder  // nil = no /services
+	Console  *console.Console   // nil = no /console
+	// PublicURL is where the console is reached (https://warden.lab.home);
+	// pushes link to their investigation there. Empty = no link.
+	PublicURL string
+	// UserHeader names the header the auth proxy sets to the signed-in user
+	// (authentik: X-Authentik-Username). Console writes require it.
+	UserHeader string
 
 	queue chan job
 
@@ -88,6 +96,9 @@ type Server struct {
 	svcMu   sync.Mutex
 	svcAt   time.Time
 	svcLast []byte
+
+	opMu   sync.Mutex // one operator investigation at a time
+	opLast time.Time
 }
 
 // MapTTL bounds how often the map re-reads the cluster (~30 GETs a build),
@@ -288,7 +299,7 @@ func (s *Server) send(ctx context.Context, id, title, body, prio string) bool {
 	}
 	nctx, cancel := context.WithTimeout(ctx, 20*time.Second)
 	defer cancel()
-	if err := s.Notify.Send(nctx, title, body, prio); err != nil {
+	if err := s.Notify.Send(nctx, title, body, prio, s.InvestigationURL(id)); err != nil {
 		_, _ = s.J.Append(ctx, KindNotifyError, id, map[string]string{"error": err.Error()})
 		return false
 	}
@@ -297,8 +308,17 @@ func (s *Server) send(ctx context.Context, id, title, body, prio string) bool {
 	return true
 }
 
+// InvestigationURL is the console page for id, "" without a PublicURL.
+func (s *Server) InvestigationURL(id string) string {
+	if s.PublicURL == "" || id == "" {
+		return ""
+	}
+	return strings.TrimRight(s.PublicURL, "/") + "/console#/inv/" + id
+}
+
 // Routes registers the HTTP API.
 func (s *Server) Routes(mux *http.ServeMux) {
+	s.consoleRoutes(mux)
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, map[string]any{"status": "ok", "version": s.Version, "enabled": s.Enabled})
 	})

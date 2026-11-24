@@ -58,7 +58,13 @@ redacted, truncated digest goes to ntfy topic `warden`.
   fingerprint and `startsAt`), one worker, a bounded queue, a daily cap on
   pushes and a daily intake bound of 4x that cap. Every skip is journaled.
 - **Off switch:** `WARDEN_ENABLED=false` journals alerts and does nothing
-  else.
+  else. The console's "investigate now" is refused too.
+- **Console writes** reach only Warden's own journal: an operator
+  investigation (the same read-only collectors, one at a time, ≥10s apart,
+  bounded per day like alert intake) and a diagnosis (append-only,
+  redacted). They need `Content-Type: application/json`, the
+  `X-Warden-Request: 1` header (CSRF) and a signed-in user from the auth
+  proxy.
 
 ## Grouping
 
@@ -99,6 +105,33 @@ cluster; its box is inferred from the nodes. Like everything in Warden, the
 map runs on the worker: when the worker is down, so is the map (the GitHub
 heartbeat watchdog covers that case).
 
+## Console
+
+`/console` is where you, the operator, investigate. The gateway puts it
+behind authentik; Warden reads who you are from `X-Authentik-Username`.
+
+- **Investigations:** every bundle, from an alert or started by you, with
+  filters (source, namespace, not yet diagnosed). A push on the `warden`
+  topic opens its investigation here (`WARDEN_PUBLIC_URL`).
+- **One investigation:** the alert, unhealthy pods with their last log
+  lines, warning events, ArgoCD, nodes, the alert's metric now, knowledge-base
+  hits, the journal trail, and **your diagnosis**: what happened, why, what
+  fixed it. Diagnoses are append-only and become phase 2's eval set.
+- **Investigate now:** run the collectors on a namespace, pod or node with no
+  alert. Nothing is pushed.
+- **A namespace:** its signals and Kuma monitors now; **blast radius** from
+  observed mesh traffic over 24h (who calls it, what it calls, whether users
+  reach it through the gateway, which nodes it runs on); **what changed**
+  (ArgoCD deploys and failed syncs, restarts with their reason, warning and
+  scaling events, alerts, investigations and diagnoses, newest first, 6h to
+  7d); and **traffic** over 1h to 7d (requests by status class, 5xx share,
+  p95, CPU and memory against limits, restarts) with a link to Grafana.
+
+Blast radius is observed, not declared: a dependency appears only if traffic
+crossed the ambient mesh in the last 24h. Namespaces outside the mesh and
+calls leaving the cluster are invisible to it. Warden draws no conclusions:
+the console lays the evidence out and you decide.
+
 ## Services
 
 `/services` is one row per namespace that ArgoCD deploys, worst first, with
@@ -134,6 +167,13 @@ grouped as on the Kuma status page.
 | `GET /investigations/{id}` | one bundle with its journal trail |
 | `GET /map` | the status map page: host → nodes → platform → observability → apps → front doors |
 | `GET /map.json` | the data behind it (rebuilt at most every 15s) |
+| `GET /console` | the operator console (behind authentik at the gateway) |
+| `GET /console/api/investigations[/{id}]` | investigations with source and diagnosis state; one bundle with its trail and diagnoses |
+| `POST /console/api/investigate` | `{"namespace","pod","node"}`: run the collectors now (journal only, no push) |
+| `POST /console/api/investigations/{id}/diagnosis` | `{"text"}`: append your diagnosis |
+| `GET /console/api/namespaces/{ns}/timeline?hours=` | what changed (default 24h, max 7d) |
+| `GET /console/api/namespaces/{ns}/traffic?range=` | `1h`, `6h`, `24h` or `7d` |
+| `GET /console/api/namespaces/{ns}/blast` | observed callers and callees over 24h |
 | `GET /services` | the services page: golden signals + Uptime Kuma per namespace |
 | `GET /services.json` | the data behind it (rebuilt at most every 30s) |
 | `GET /metrics` | journal events by kind, `warden_enabled` |
@@ -150,6 +190,8 @@ grouped as on the Kuma status page.
 | `WARDEN_KB_ROOTS` | — | `label=dir,label=dir` (git-synced markdown) |
 | `WARDEN_KUMA_URL` / `WARDEN_KUMA_SLUG` | `http://uptime-kuma.monitoring.svc:3001` / `homelab` | public status page read by `/services` (`off` = no monitors) |
 | `WARDEN_KUMA_MAP` | — | `Monitor name=namespace;…` for monitors whose name resolves to no namespace (`VictoriaMetrics=monitoring`). `;`-separated because names can hold commas |
+| `WARDEN_PUBLIC_URL` | — | where the console is reached (`https://warden.lab.home`); pushes link to their investigation |
+| `WARDEN_USER_HEADER` | `X-Authentik-Username` | header the auth proxy sets to the signed-in user; every console API call requires it, so a missing gateway policy fails closed (empty = no check, local dev only) |
 | `WARDEN_MAP_HOSTS` | — | `label=namespace,…` for front-door hosts whose first label isn't a namespace or app name (`grafana=monitoring`). Used by both the map and front-door investigations |
 
 ## Roadmap
