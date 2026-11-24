@@ -1,5 +1,7 @@
 # Warden
 
+[![CI](https://github.com/Blacklotus89898/Warden/actions/workflows/ci.yaml/badge.svg)](https://github.com/Blacklotus89898/Warden/actions/workflows/ci.yaml)
+
 An incident-investigation agent for the homelab platform. **It reads the
 cluster but never writes to it.** Decision record:
 [Homelab ADR 0011](https://github.com/Blacklotus89898/Homelab/blob/main/docs/adr/0011-warden-sre-agent.md).
@@ -119,12 +121,26 @@ heartbeat watchdog covers that case).
 | `WARDEN_KB_ROOTS` | — | `label=dir,label=dir` (git-synced markdown) |
 | `WARDEN_MAP_HOSTS` | — | `label=namespace,…` for front-door hosts whose first label isn't a namespace or app name (`grafana=monitoring`). Used by both the map and front-door investigations |
 
+## Run locally
+
+```bash
+go test ./...                       # includes boundary_test.go
+WARDEN_ENABLED=false go run .       # journal-only; needs a kubeconfig/in-cluster config to collect
+curl localhost:8080/health; curl localhost:8080/investigations   # map at http://localhost:8080/map
+```
+
 ## Roadmap
 
 These are the ADR 0011 phases: 1a evidence (this) → 1b model summary over
 the bundle → 2 replay eval → 3 fixes as PRs → 4 gated live actions →
 5 narrow self-approval.
 
-```bash
-go test ./...
-```
+## Docs
+
+- Decision record: [Homelab ADR 0011](https://github.com/Blacklotus89898/Homelab/blob/main/docs/adr/0011-warden-sre-agent.md) (Warden's design lives there, not in this repo)
+- Runbook: [DaVinci `runbooks/warden.md`](https://github.com/Blacklotus89898/DaVinci/blob/main/docs/runbooks/warden.md)
+- Deployment: Homelab [`services/warden`](https://github.com/Blacklotus89898/Homelab/tree/main/services/warden)
+
+## Contributing
+
+Read [AGENTS.md](AGENTS.md) first — it is the guide for humans and coding agents alike: commands, layout, the rules that must not break, how to add a feature and how changes ship. Never weaken the read-only boundary pinned by `boundary_test.go`.
