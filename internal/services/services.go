@@ -67,18 +67,29 @@ type Query struct {
 }
 
 // Queries is the fixed set of golden-signal expressions, one series per
-// namespace. Traffic, errors and latency come from the Istio gateway
-// (reporter="source"), the same series as the Grafana "Service health"
-// dashboard, grouped by namespace instead of service name.
-var Queries = map[string]Query{
-	"traffic": {`sum by (destination_service_namespace) (rate(istio_requests_total{reporter="source"}[` + Window + `]))`, "destination_service_namespace"},
-	"errors": {`sum by (destination_service_namespace) (rate(istio_requests_total{reporter="source",response_code=~"5.."}[` + Window + `]))` +
-		` / sum by (destination_service_namespace) (rate(istio_requests_total{reporter="source"}[` + Window + `]))`, "destination_service_namespace"},
-	"latency": {`histogram_quantile(0.95, sum by (le, destination_service_namespace) (rate(istio_request_duration_milliseconds_bucket{reporter="source"}[` + Window + `])))`, "destination_service_namespace"},
-	"cpu": {`max by (namespace) (max by (namespace, container) (rate(container_cpu_usage_seconds_total{container!="",container!="POD"}[` + Window + `]))` +
-		` / max by (namespace, container) (kube_pod_container_resource_limits{resource="cpu"}))`, "namespace"},
-	"memory": {`max by (namespace) (max by (namespace, container) (container_memory_working_set_bytes{container!="",container!="POD"})` +
-		` / max by (namespace, container) (kube_pod_container_resource_limits{resource="memory"}))`, "namespace"},
+// namespace, over the "now" Window. Traffic, errors and latency come from the
+// Istio gateway (reporter="source"), the same series as the Grafana "Service
+// health" dashboard, grouped by namespace instead of service name.
+var Queries = QueriesFor(Window)
+
+// QueriesFor builds the golden-signal expressions over rate window w.
+//
+// Errors: a namespace that has never served a 5xx has no 5xx series at all,
+// so the numerator falls back to traffic*0 and the share reads 0, not "no
+// data". Memory is the peak working set within w, so a graph whose points are
+// w apart still shows a short spike.
+func QueriesFor(w string) map[string]Query {
+	total := `sum by (destination_service_namespace) (rate(istio_requests_total{reporter="source"}[` + w + `]))`
+	fivexx := `sum by (destination_service_namespace) (rate(istio_requests_total{reporter="source",response_code=~"5.."}[` + w + `]))`
+	return map[string]Query{
+		"traffic": {total, "destination_service_namespace"},
+		"errors":  {`(` + fivexx + ` or (` + total + ` * 0)) / ` + total, "destination_service_namespace"},
+		"latency": {`histogram_quantile(0.95, sum by (le, destination_service_namespace) (rate(istio_request_duration_milliseconds_bucket{reporter="source"}[` + w + `])))`, "destination_service_namespace"},
+		"cpu": {`max by (namespace) (max by (namespace, container) (rate(container_cpu_usage_seconds_total{container!="",container!="POD"}[` + w + `]))` +
+			` / max by (namespace, container) (kube_pod_container_resource_limits{resource="cpu"}))`, "namespace"},
+		"memory": {`max by (namespace) (max by (namespace, container) (max_over_time(container_memory_working_set_bytes{container!="",container!="POD"}[` + w + `]))` +
+			` / max by (namespace, container) (kube_pod_container_resource_limits{resource="memory"}))`, "namespace"},
+	}
 }
 
 // Signals are one service's golden signals now. Nil means no data: a

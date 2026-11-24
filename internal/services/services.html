@@ -65,6 +65,30 @@ td.num.none { color: var(--grey); }
 .card { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; }
 .card.down { border-color: var(--red); }
 .card .mon .name { min-width: 0; font-weight: 600; }
+.ranges { display: inline-flex; gap: 2px; border: 1px solid var(--line); border-radius: 8px; padding: 2px; background: var(--sunk); }
+.ranges button { border: 0; background: none; color: var(--muted); font: inherit; font-size: 12px; padding: 2px 10px; border-radius: 6px; cursor: pointer; }
+.ranges button[aria-pressed="true"] { background: var(--panel); color: var(--ink); font-weight: 600; }
+.ranges button:focus-visible, .ns-btn:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
+svg.spark { display: block; margin: 3px 0 0 auto; overflow: visible; }
+svg.spark path.line { fill: none; stroke: var(--muted); stroke-width: 1.25; }
+svg.spark path.area { fill: var(--muted); opacity: .12; stroke: none; }
+svg.spark line.thr { stroke: var(--amber); stroke-width: 1; stroke-dasharray: 2 2; }
+td.swing svg.spark path.line { stroke: var(--amber); }
+td.swing svg.spark path.area { fill: var(--amber); }
+.peak { display: block; font-size: 11px; color: var(--muted); font-weight: 400; }
+.peak.amber { color: var(--amber); font-weight: 600; }
+.ns-btn { border: 0; background: none; padding: 0; font: inherit; font-weight: 600; color: var(--ink); cursor: pointer; text-decoration: underline dotted var(--muted); text-underline-offset: 3px; }
+tr.detail td { background: var(--sunk); }
+.charts { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 10px; }
+.chart { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; }
+.chart h4 { margin: 0 0 2px; font-size: 12px; }
+.chart .stats { font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.chart svg { width: 100%; height: 90px; display: block; margin-top: 4px; }
+.chart svg path.line { fill: none; stroke: var(--focus); stroke-width: 1.5; }
+.chart svg path.area { fill: var(--focus); opacity: .1; }
+.chart svg line.thr { stroke: var(--amber); stroke-dasharray: 3 3; }
+.chart svg text { font-size: 10px; fill: var(--muted); }
+.chart svg line.grid { stroke: var(--line); }
 </style>
 </head>
 <body>
@@ -78,7 +102,10 @@ td.num.none { color: var(--grey); }
 </header>
 <main>
   <div class="errors" id="errors"></div>
-  <p class="note">Golden signals over the last <span id="win">5m</span>. Traffic, errors and latency are what the Istio gateway sees, so a service without a <code>*.lab.home</code> route shows "–". Saturation is the busiest container's CPU and the fullest container's memory against its limit. Amber is the paging threshold getting close: 5xx &gt; 10%, p95 &gt; 3s, &gt; 90% of a limit.</p>
+  <p class="note" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap"><span>History:</span>
+    <span class="ranges" id="ranges" role="group" aria-label="History range"></span>
+    <span id="histnote"></span></p>
+  <p class="note">Golden signals over the last <span id="win">5m</span>. Traffic, errors and latency are what the Istio gateway sees, so a service without a <code>*.lab.home</code> route shows "–". Saturation is the busiest container's CPU and the fullest container's memory against its limit. Amber is the paging threshold getting close: 5xx &gt; 10%, p95 &gt; 3s, &gt; 90% of a limit. Under each number is its history over the chosen range; it turns amber when the peak is far above the usual level (peak ≥ 3× median) or crossed the threshold. Click a service for full-size charts.</p>
   <div class="wrap">
     <table>
       <thead><tr>
@@ -110,12 +137,101 @@ const pct = (f) => (f * 100).toFixed(f < 0.1 && f > 0 ? 1 : 0) + "%";
 function rps(f) { return f >= 10 ? f.toFixed(0) + "/s" : f >= 0.1 ? f.toFixed(2) + "/s" : (f * 60).toFixed(1) + "/min"; }
 function ms(f) { return f >= 1000 ? (f / 1000).toFixed(2) + " s" : f.toFixed(0) + " ms"; }
 
-function numCell(v, fmt, amberAbove) {
+const SIGNALS = [
+  { key: "traffic", now: "trafficRps", name: "Traffic", fmt: (f) => rps(f) },
+  { key: "errors", now: "errorShare", name: "Errors (5xx share)", fmt: (f) => pct(f), thr: 0.10 },
+  { key: "latency", now: "latencyP95Ms", name: "Latency p95", fmt: (f) => ms(f), thr: 3000 },
+  { key: "cpu", now: "cpuOfLimit", name: "CPU / limit", fmt: (f) => pct(f), thr: 0.90 },
+  { key: "memory", now: "memoryOfLimit", name: "Memory / limit", fmt: (f) => pct(f), thr: 0.90 },
+];
+const SWING = 3; // peak >= 3x median reads as a severe fluctuation
+const SVGNS = "http://www.w3.org/2000/svg";
+function svgEl(tag, attrs) {
+  const e = document.createElementNS(SVGNS, tag);
+  for (const k in attrs) e.setAttribute(k, attrs[k]);
+  return e;
+}
+const when = (t) => new Date(t * 1000).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+
+// plot draws points into an svg of w x h; the y axis starts at 0 and covers
+// the threshold when one is given, so a flat line near 0 doesn't look noisy.
+function plot(svg, tr, w, h, thr, pad) {
+  const p = pad || { l: 0, r: 0, t: 1, b: 1 };
+  const x0 = hist.start, x1 = hist.end;
+  let top = Math.max(tr.max, 1e-9);
+  if (thr !== undefined && thr < top * 1.5) top = Math.max(top, thr);
+  top *= 1.05;
+  const X = (t) => p.l + ((t - x0) / Math.max(x1 - x0, 1)) * (w - p.l - p.r);
+  const Y = (v) => p.t + (1 - v / top) * (h - p.t - p.b);
+  let d = "", prev = null;
+  const stepS = hist.stepS;
+  for (const [t, v] of tr.points) {
+    d += (prev !== null && t - prev > stepS * 1.5 ? "M" : d ? "L" : "M") + X(t).toFixed(1) + " " + Y(v).toFixed(1);
+    prev = t;
+  }
+  const pts = tr.points;
+  const area = d ? "M" + X(pts[0][0]).toFixed(1) + " " + Y(0) + d.replace(/^M/, " L") + " L" + X(pts[pts.length - 1][0]).toFixed(1) + " " + Y(0) + "Z" : "";
+  if (area && !/M.*M/.test(d)) svg.append(svgEl("path", { class: "area", d: area }));
+  if (thr !== undefined && thr <= top) svg.append(svgEl("line", { class: "thr", x1: p.l, x2: w - p.r, y1: Y(thr), y2: Y(thr) }));
+  svg.append(svgEl("path", { class: "line", d }));
+  return { X, Y, top };
+}
+
+function swings(tr, thr) {
+  return (tr.spread !== undefined && tr.spread >= SWING && tr.max > 0) || (thr !== undefined && tr.max > thr);
+}
+
+function numCell(v, sig, tr) {
   const td = el("td", "num");
-  if (v === undefined || v === null) { td.classList.add("none"); td.textContent = "–"; return td; }
-  td.textContent = fmt(v);
-  if (amberAbove !== undefined && v > amberAbove) td.classList.add("amber");
+  if (v === undefined || v === null) { td.classList.add("none"); td.textContent = "–"; }
+  else {
+    td.textContent = sig.fmt(v);
+    if (sig.thr !== undefined && v > sig.thr) td.classList.add("amber");
+  }
+  if (tr && tr.points.length > 1) {
+    const svg = svgEl("svg", { class: "spark", width: 96, height: 22, viewBox: "0 0 96 22" });
+    plot(svg, tr, 96, 22, sig.thr);
+    const sw = swings(tr, sig.thr);
+    if (sw) td.classList.add("swing");
+    const t = svgEl("title", {});
+    t.textContent = sig.name + " over " + hist.range + ": min " + sig.fmt(tr.min) + " · median " + sig.fmt(tr.median) +
+      " · max " + sig.fmt(tr.max) + " at " + when(tr.maxAt);
+    svg.append(t);
+    td.append(svg);
+    if (sw) td.append(el("span", "peak amber", "peak " + sig.fmt(tr.max)));
+  }
   return td;
+}
+
+function detailRow(ns) {
+  const tr = el("tr", "detail");
+  const td = el("td"); td.colSpan = 7;
+  const box = el("div", "charts");
+  const series = (hist.series || {})[ns] || {};
+  for (const sig of SIGNALS) {
+    const t = series[sig.key];
+    const c = el("div", "chart");
+    c.append(el("h4", null, sig.name + " · " + hist.range));
+    if (!t) { c.append(el("div", "stats", "no data")); box.append(c); continue; }
+    c.append(el("div", "stats", "min " + sig.fmt(t.min) + " · median " + sig.fmt(t.median) + " · max " + sig.fmt(t.max) +
+      " (" + when(t.maxAt) + ")" + (t.spread !== undefined ? " · peak/median " + t.spread.toFixed(1) + "×" : "")));
+    const W = 300, H = 90;
+    const svg = svgEl("svg", { viewBox: "0 0 " + W + " " + H, preserveAspectRatio: "none", role: "img" });
+    const pad = { l: 2, r: 2, t: 12, b: 14 };
+    const g = plot(svg, t, W, H, sig.thr, pad);
+    svg.insertBefore(svgEl("line", { class: "grid", x1: pad.l, x2: W - pad.r, y1: H - pad.b, y2: H - pad.b }), svg.firstChild);
+    const top = svgEl("text", { x: pad.l, y: 9 }); top.textContent = sig.fmt(g.top / 1.05);
+    const l = svgEl("text", { x: pad.l, y: H - 2 }); l.textContent = when(hist.start);
+    const r = svgEl("text", { x: W - pad.r, y: H - 2, "text-anchor": "end" }); r.textContent = when(hist.end);
+    svg.append(top, l, r);
+    const tl = svgEl("title", {}); tl.textContent = sig.name + ", " + hist.step + " per point";
+    svg.append(tl);
+    c.append(svg);
+    box.append(c);
+  }
+  td.append(box);
+  tr.append(td);
+  return tr;
 }
 
 function monLine(m) {
@@ -136,7 +252,13 @@ function monLine(m) {
   return row;
 }
 
+let last = null;
+const open = new Set();
+let hist = { range: "", series: {} };
+let range = (location.hash.match(/range=(6h|24h|7d|30d)/) || [])[1] || "24h";
+
 function render(v) {
+  last = v;
   $("meta").textContent = "updated " + new Date(v.generated).toLocaleTimeString() + " · refreshes every 30s";
   $("win").textContent = v.window;
   const counts = { red: 0, amber: 0, green: 0, unknown: 0, grey: 0 };
@@ -153,17 +275,18 @@ function render(v) {
     const tr = el("tr");
     const first = el("td");
     const head = el("div");
-    head.append(el("span", "st " + s.status, s.status), document.createTextNode(" "), el("span", "ns", s.namespace));
+    const btn = el("button", "ns-btn", s.namespace);
+    btn.type = "button";
+    btn.setAttribute("aria-expanded", String(open.has(s.namespace)));
+    btn.onclick = () => { open.has(s.namespace) ? open.delete(s.namespace) : open.add(s.namespace); render(last); };
+    head.append(el("span", "st " + s.status, s.status), document.createTextNode(" "), btn);
     first.append(head);
     if (s.apps && !(s.apps.length === 1 && s.apps[0] === s.namespace)) first.append(el("div", "apps", s.apps.join(", ")));
     if (s.flags && s.flags.length) first.append(el("div", "flags", s.flags.join(" · ")));
     tr.append(first);
     const g = s.signals || {};
-    tr.append(numCell(g.trafficRps, rps));
-    tr.append(numCell(g.errorShare, pct, 0.10));
-    tr.append(numCell(g.latencyP95Ms, ms, 3000));
-    tr.append(numCell(g.cpuOfLimit, pct, 0.90));
-    tr.append(numCell(g.memoryOfLimit, pct, 0.90));
+    const hs = (hist.series || {})[s.namespace] || {};
+    for (const sig of SIGNALS) tr.append(numCell(g[sig.now], sig, hs[sig.key]));
     const mt = el("td");
     const box = el("div", "mons");
     for (const m of s.monitors || []) box.append(monLine(m));
@@ -171,6 +294,7 @@ function render(v) {
     mt.append(box);
     tr.append(mt);
     rows.append(tr);
+    if (open.has(s.namespace)) rows.append(detailRow(s.namespace));
   }
 
   const out = $("outside"); out.replaceChildren();
@@ -194,6 +318,37 @@ function render(v) {
   if (!groups.size) out.append(el("p", "note", "none"));
 }
 
+function drawRanges() {
+  const box = $("ranges"); box.replaceChildren();
+  for (const r of ["6h", "24h", "7d", "30d"]) {
+    const b = el("button", null, r);
+    b.type = "button";
+    b.setAttribute("aria-pressed", String(r === range));
+    b.onclick = () => { range = r; history.replaceState(null, "", "#range=" + r); drawRanges(); loadHistory(); };
+    box.append(b);
+  }
+}
+
+async function loadHistory() {
+  const want = range;
+  $("histnote").textContent = "loading " + want + "…";
+  try {
+    const r = await fetch("services/history.json?range=" + want, { cache: "no-store" });
+    if (!r.ok) throw new Error("HTTP " + r.status + ": " + (await r.text()));
+    const h = await r.json();
+    if (want !== range) return;
+    const step = h.step.match(/(?:(\d+)h)?(?:(\d+)m)?/);
+    hist = { range: h.range, step: h.step, series: h.series || {},
+      start: Date.parse(h.start) / 1000, end: Date.parse(h.end) / 1000,
+      stepS: (+(step[1] || 0)) * 3600 + (+(step[2] || 0)) * 60 };
+    $("histnote").textContent = "one point per " + h.step.replace(/0s$/, "").replace(/h0m$/, "h") +
+      ((h.errors || []).length ? " · could not read: " + h.errors.join(" · ") : "");
+  } catch (e) {
+    $("histnote").textContent = "history unavailable: " + e.message;
+  }
+  if (last) render(last);
+}
+
 async function load() {
   try {
     const r = await fetch("services.json", { cache: "no-store" });
@@ -203,8 +358,11 @@ async function load() {
     $("errors").textContent = "Could not load services.json: " + e.message;
   }
 }
+drawRanges();
 load();
+loadHistory();
 setInterval(load, 30000);
+setInterval(loadHistory, 300000);
 </script>
 </body>
 </html>
