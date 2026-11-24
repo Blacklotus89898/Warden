@@ -101,6 +101,8 @@ type Server struct {
 	svcMu   sync.Mutex
 	svcAt   time.Time
 	svcLast []byte
+	histMu  sync.Mutex
+	hist    map[string]histEntry
 
 	opMu   sync.Mutex // one operator investigation at a time
 	opLast time.Time
@@ -425,6 +427,29 @@ func (s *Server) Routes(mux *http.ServeMux) {
 		w.Header().Set("Cache-Control", "no-store")
 		_, _ = w.Write(b)
 	})
+	// History behind the /services graphs: fixed ranges only, cached per range.
+	mux.HandleFunc("GET /services/history.json", func(w http.ResponseWriter, r *http.Request) {
+		if s.Services == nil {
+			http.NotFound(w, r)
+			return
+		}
+		rng := r.URL.Query().Get("range")
+		if rng == "" {
+			rng = "24h"
+		}
+		if _, ok := services.Spans[rng]; !ok {
+			http.Error(w, "range must be one of 6h, 24h, 7d, 30d", http.StatusBadRequest)
+			return
+		}
+		b, err := s.historyJSON(r.Context(), rng)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadGateway)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Cache-Control", "no-store")
+		_, _ = w.Write(b)
+	})
 	mux.HandleFunc("GET /metrics", func(w http.ResponseWriter, r *http.Request) {
 		counts, err := s.J.Counts(r.Context())
 		if err != nil {
@@ -506,6 +531,40 @@ func (s *Server) servicesJSON(ctx context.Context) ([]byte, error) {
 		return nil, err
 	}
 	s.svcLast, s.svcAt = out, time.Now()
+	return out, nil
+}
+
+type histEntry struct {
+	at  time.Time
+	out []byte
+}
+
+// historyJSON builds (or reuses) one range's history. A range is reused for
+// one step, so the page can poll without re-running the queries.
+func (s *Server) historyJSON(ctx context.Context, rng string) ([]byte, error) {
+	s.histMu.Lock()
+	defer s.histMu.Unlock()
+	ttl := services.Spans[rng].Step
+	if ttl > 5*time.Minute {
+		ttl = 5 * time.Minute
+	}
+	if e, ok := s.hist[rng]; ok && time.Since(e.at) < ttl {
+		return e.out, nil
+	}
+	bctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	h, err := s.Services.History(bctx, rng)
+	if err != nil {
+		return nil, err
+	}
+	out, err := json.Marshal(h)
+	if err != nil {
+		return nil, err
+	}
+	if s.hist == nil {
+		s.hist = map[string]histEntry{}
+	}
+	s.hist[rng] = histEntry{time.Now(), out}
 	return out, nil
 }
 

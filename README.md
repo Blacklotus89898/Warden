@@ -156,6 +156,14 @@ route; the rest show "–". Amber means a paging threshold in Homelab's
 limit), and a monitor that is down makes its service red. Nothing is
 concluded or acted on: it is evidence for the person investigating.
 
+Under each number is its history over 6h, 24h, 7d or 30d (one point per 2m,
+10m, 1h or 4h; each point's rate window is its step, at least 5m, and memory
+is the peak within it, so a burst between two points still shows). A
+sparkline turns amber, with its peak, when the peak is at least 3× the median
+or crossed the threshold. Clicking a service opens full-size charts with
+min/median/max and when the peak happened. A service that has never served a
+5xx reads 0%, not "–".
+
 A monitor joins a namespace by its name: as a front-door host
 (`kavita.lab.home`), as a namespace or app name (`Sealed Secrets` →
 `sealed-secrets`), or through `WARDEN_KUMA_MAP`. Monitors that join nothing
@@ -180,6 +188,7 @@ grouped as on the Kuma status page.
 | `GET /console/api/namespaces/{ns}/blast` | observed callers and callees over 24h |
 | `GET /services` | the services page: golden signals + Uptime Kuma per namespace |
 | `GET /services.json` | the data behind it (rebuilt at most every 30s) |
+| `GET /services/history.json?range=6h\|24h\|7d\|30d` | per-namespace signal history behind the graphs (reused for one step, at most 5m) |
 | `GET /metrics` | journal events by kind, `warden_enabled` |
 | `GET /health` | liveness |
 
