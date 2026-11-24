@@ -63,8 +63,12 @@ redacted, truncated digest goes to ntfy topic `warden`.
   investigation (the same read-only collectors, one at a time, ≥10s apart,
   bounded per day like alert intake) and a diagnosis (append-only,
   redacted). They need `Content-Type: application/json`, the
-  `X-Warden-Request: 1` header (CSRF) and a signed-in user from the auth
-  proxy.
+  `X-Warden-Request: 1` header (CSRF) and a signed-in user.
+- **Who is signed in** comes only from authentik's signed `X-Authentik-Jwt`,
+  verified against the provider's public JWKS (RS256/ES256, expiry, issuer,
+  audience). A username header alone is ignored, so neither a LAN client nor
+  a pod calling Warden's Service can claim to be someone. One fixed `GET` to
+  the JWKS URL, cached.
 
 ## Grouping
 
@@ -108,7 +112,7 @@ heartbeat watchdog covers that case).
 ## Console
 
 `/console` is where you, the operator, investigate. The gateway puts it
-behind authentik; Warden reads who you are from `X-Authentik-Username`.
+behind authentik; Warden takes who you are from authentik's signed JWT.
 
 - **Investigations:** every bundle, from an alert or started by you, with
   filters (source, namespace, not yet diagnosed). A push on the `warden`
@@ -191,7 +195,9 @@ grouped as on the Kuma status page.
 | `WARDEN_KUMA_URL` / `WARDEN_KUMA_SLUG` | `http://uptime-kuma.monitoring.svc:3001` / `homelab` | public status page read by `/services` (`off` = no monitors) |
 | `WARDEN_KUMA_MAP` | — | `Monitor name=namespace;…` for monitors whose name resolves to no namespace (`VictoriaMetrics=monitoring`). `;`-separated because names can hold commas |
 | `WARDEN_PUBLIC_URL` | — | where the console is reached (`https://warden.lab.home`); pushes link to their investigation |
-| `WARDEN_USER_HEADER` | `X-Authentik-Username` | header the auth proxy sets to the signed-in user; every console API call requires it, so a missing gateway policy fails closed (empty = no check, local dev only) |
+| `WARDEN_AUTH_JWKS_URL` | — | authentik provider JWKS (`http://authentik.default.svc:9000/application/o/<slug>/jwks/`). Set in production: the console user then comes only from a verified `X-Authentik-Jwt` |
+| `WARDEN_AUTH_ISSUER` / `WARDEN_AUTH_AUDIENCE` | — | optional exact `iss`, and the provider's client ID required in `aud` |
+| `WARDEN_USER_HEADER` | `X-Authentik-Username` | **development only**, used when no JWKS is set: the header is trusted as-is. Every console API call requires a user either way, so a missing gateway policy fails closed
 | `WARDEN_MAP_HOSTS` | — | `label=namespace,…` for front-door hosts whose first label isn't a namespace or app name (`grafana=monitoring`). Used by both the map and front-door investigations |
 
 ## Roadmap

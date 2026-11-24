@@ -60,8 +60,8 @@ func (s *Server) consoleRoutes(mux *http.ServeMux) {
 			w.Header().Set("Cache-Control", "no-store")
 			// Fail closed: if the gateway's auth policy were ever missing,
 			// reads stop here instead of serving logs to the LAN.
-			if s.UserHeader != "" && s.user(r) == "" {
-				http.Error(w, "not signed in (no "+s.UserHeader+" from the auth proxy)", http.StatusUnauthorized)
+			if s.signInRequired() && s.user(r) == "" {
+				http.Error(w, "not signed in (no valid authentik session)", http.StatusUnauthorized)
 				return
 			}
 			h(w, r)
@@ -173,12 +173,38 @@ func (s *Server) consoleRoutes(mux *http.ServeMux) {
 	})
 }
 
-// user is the signed-in operator as the auth proxy reports it, "" if none.
+// JWTHeader is where authentik's proxy outpost forwards the signed token.
+const JWTHeader = "X-Authentik-Jwt"
+
+// user is the signed-in operator, "" if none. With a verifier, only a valid
+// authentik JWT counts: a username header alone is ignored, so neither a LAN
+// client nor a pod calling the Service directly can claim to be someone.
 func (s *Server) user(r *http.Request) string {
+	if s.Auth != nil {
+		tok := strings.TrimSpace(r.Header.Get(JWTHeader))
+		if tok == "" {
+			return ""
+		}
+		c, err := s.Auth.Verify(r.Context(), tok)
+		if err != nil {
+			if s.Log != nil {
+				s.Log.Warn("console: rejected token", "err", err)
+			}
+			return ""
+		}
+		return trimUser(c.Username)
+	}
 	if s.UserHeader == "" {
 		return ""
 	}
-	u := strings.TrimSpace(r.Header.Get(s.UserHeader))
+	return trimUser(r.Header.Get(s.UserHeader))
+}
+
+// signInRequired: is a signed-in user needed for console API calls?
+func (s *Server) signInRequired() bool { return s.Auth != nil || s.UserHeader != "" }
+
+func trimUser(u string) string {
+	u = strings.TrimSpace(u)
 	if len(u) > 64 {
 		u = u[:64]
 	}
@@ -193,8 +219,8 @@ func (s *Server) writeGuard(w http.ResponseWriter, r *http.Request) (string, boo
 		return "", false
 	}
 	u := s.user(r)
-	if s.UserHeader != "" && u == "" {
-		http.Error(w, "not signed in (no "+s.UserHeader+" from the auth proxy)", http.StatusUnauthorized)
+	if s.signInRequired() && u == "" {
+		http.Error(w, "not signed in (no valid authentik session)", http.StatusUnauthorized)
 		return "", false
 	}
 	if u == "" {

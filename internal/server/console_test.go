@@ -2,13 +2,20 @@ package server
 
 import (
 	"context"
+	"crypto"
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
+	"math/big"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/Blacklotus89898/Warden/internal/authjwt"
 	"github.com/Blacklotus89898/Warden/internal/console"
 )
 
@@ -174,5 +181,57 @@ func TestConsoleOffWithoutBuilder(t *testing.T) {
 		if rec.Code != 404 {
 			t.Errorf("%s: %d", p, rec.Code)
 		}
+	}
+}
+
+// The automated review's case: with a verifier configured, a username header
+// alone (from a LAN client or a pod calling the Service) must not sign anyone in.
+func TestConsoleUserComesFromVerifiedJWT(t *testing.T) {
+	key, _ := rsa.GenerateKey(rand.Reader, 2048)
+	b64 := func(b []byte) string { return base64.RawURLEncoding.EncodeToString(b) }
+	ks := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"keys": []map[string]string{
+			{"kty": "RSA", "kid": "k1", "n": b64(key.N.Bytes()), "e": b64(big.NewInt(int64(key.E)).Bytes())}}})
+	}))
+	defer ks.Close()
+	tok := func(k *rsa.PrivateKey, user string) string {
+		h, _ := json.Marshal(map[string]string{"alg": "RS256", "kid": "k1"})
+		c, _ := json.Marshal(map[string]any{"preferred_username": user, "aud": "warden", "exp": time.Now().Add(time.Hour).Unix()})
+		in := b64(h) + "." + b64(c)
+		sum := sha256.Sum256([]byte(in))
+		sig, _ := rsa.SignPKCS1v15(rand.Reader, k, crypto.SHA256, sum[:])
+		return in + "." + b64(sig)
+	}
+	s, r, mux, _ := consoleServer(t)
+	s.Auth = &authjwt.Verifier{JWKSURL: ks.URL, Audience: "warden"}
+
+	forged := map[string]string{"Content-Type": "application/json", RequestHeader: "1", "X-Authentik-Username": "steve"}
+	if w := post(mux, "/console/api/investigate", `{"namespace":"linkding"}`, forged); w.Code != http.StatusUnauthorized {
+		t.Errorf("username header without a token: got %d", w.Code)
+	}
+	other, _ := rsa.GenerateKey(rand.Reader, 2048)
+	forged[JWTHeader] = tok(other, "steve")
+	if w := post(mux, "/console/api/investigate", `{"namespace":"linkding"}`, forged); w.Code != http.StatusUnauthorized {
+		t.Errorf("token signed by another key: got %d", w.Code)
+	}
+	req := httptest.NewRequest(http.MethodGet, "/console/api/investigations", nil)
+	req.Header.Set("X-Authentik-Username", "steve")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusUnauthorized {
+		t.Errorf("reads with a header only: got %d", rec.Code)
+	}
+	if len(r.ran) != 0 {
+		t.Fatal("collectors ran for an unauthenticated request")
+	}
+
+	good := map[string]string{"Content-Type": "application/json", RequestHeader: "1", JWTHeader: tok(key, "steve"), "X-Authentik-Username": "mallory"}
+	w := post(mux, "/console/api/investigate", `{"namespace":"linkding"}`, good)
+	if w.Code != 200 {
+		t.Fatalf("valid token: got %d %s", w.Code, w.Body)
+	}
+	evs, _ := s.J.List(context.Background(), KindRequested, 5)
+	if len(evs) != 1 || !strings.Contains(string(evs[0].Payload), `"by":"steve"`) {
+		t.Errorf("the user must come from the token, not the header: %s", evs[0].Payload)
 	}
 }

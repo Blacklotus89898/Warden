@@ -18,6 +18,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/Blacklotus89898/Warden/internal/authjwt"
 	"github.com/Blacklotus89898/Warden/internal/console"
 	"github.com/Blacklotus89898/Warden/internal/investigate"
 	"github.com/Blacklotus89898/Warden/internal/journal"
@@ -91,6 +92,15 @@ func main() {
 			monNS[strings.TrimSpace(name)] = strings.TrimSpace(ns)
 		}
 	}
+	// The console's user comes from authentik's signed JWT, verified against
+	// the provider's public JWKS. Without it the username header is trusted,
+	// which any client can forge: development only.
+	var auth *authjwt.Verifier
+	if u := os.Getenv("WARDEN_AUTH_JWKS_URL"); u != "" {
+		auth = &authjwt.Verifier{JWKSURL: u, Issuer: os.Getenv("WARDEN_AUTH_ISSUER"), Audience: os.Getenv("WARDEN_AUTH_AUDIENCE")}
+	} else {
+		logger.Warn("WARDEN_AUTH_JWKS_URL is not set: the console trusts the user header as-is (development only)")
+	}
 	srv := &server.Server{
 		J: j, Enabled: enabled, DailyCap: daily, Log: logger, Version: version,
 		Runner: &investigate.Investigator{
@@ -105,6 +115,7 @@ func main() {
 		// Pushes link to their investigation here; the gateway puts /console
 		// behind authentik, which sets the user header on every request.
 		PublicURL:  os.Getenv("WARDEN_PUBLIC_URL"),
+		Auth:       auth,
 		UserHeader: envOr("WARDEN_USER_HEADER", "X-Authentik-Username"),
 		Notify:     notify.Ntfy{URL: os.Getenv("WARDEN_NTFY_URL"), Topic: envOr("WARDEN_NTFY_TOPIC", "warden")},
 	}

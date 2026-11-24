@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/Blacklotus89898/Warden/internal/alert"
+	"github.com/Blacklotus89898/Warden/internal/authjwt"
 	"github.com/Blacklotus89898/Warden/internal/console"
 	"github.com/Blacklotus89898/Warden/internal/investigate"
 	"github.com/Blacklotus89898/Warden/internal/journal"
@@ -77,8 +78,12 @@ type Server struct {
 	// PublicURL is where the console is reached (https://warden.lab.home);
 	// pushes link to their investigation there. Empty = no link.
 	PublicURL string
+	// Auth verifies authentik's signed X-Authentik-Jwt; the console's user
+	// comes from the verified token. When nil, UserHeader is trusted as-is
+	// (local development only: any client can set a header).
+	Auth *authjwt.Verifier
 	// UserHeader names the header the auth proxy sets to the signed-in user
-	// (authentik: X-Authentik-Username). Console writes require it.
+	// (authentik: X-Authentik-Username); used only when Auth is nil.
 	UserHeader string
 
 	queue chan job
