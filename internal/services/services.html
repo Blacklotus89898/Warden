@@ -1,0 +1,210 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Warden services</title>
+<style>
+:root {
+  --bg: #f6f7f9; --panel: #ffffff; --sunk: #f1f3f6; --ink: #1c2330; --muted: #5d6878; --line: #d5dae2;
+  --red: #d64545; --red-bg: #fdecec; --amber: #c98a12; --amber-bg: #fdf4e1;
+  --green: #2f9e62; --green-bg: #e8f6ee; --grey: #8a93a3; --grey-bg: #eef0f3;
+  --unknown: #7a5cc9; --unknown-bg: #f0ebfb; --focus: #2d6cdf;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #12151b; --panel: #1b2029; --sunk: #161a22; --ink: #e6e9ef; --muted: #98a2b3; --line: #343c4a;
+    --red: #f06a6a; --red-bg: #3a1f22; --amber: #e3a93a; --amber-bg: #3a2f1a;
+    --green: #4cc184; --green-bg: #1a3227; --grey: #8a93a3; --grey-bg: #252a33;
+    --unknown: #a68cf0; --unknown-bg: #2a2340; --focus: #6d9cf5;
+  }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--ink);
+  font: 14px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+header { padding: 12px 16px; display: flex; flex-wrap: wrap; gap: 12px; align-items: center;
+  justify-content: space-between; border-bottom: 1px solid var(--line); background: var(--panel); }
+h1 { font-size: 18px; margin: 0; }
+h2 { font-size: 15px; margin: 24px 0 8px; }
+a { color: var(--focus); }
+.meta { color: var(--muted); font-size: 12px; }
+.counts { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.pill { border-radius: 999px; padding: 2px 10px; font-weight: 600; font-size: 12px; white-space: nowrap; }
+.pill.red, .st.red { background: var(--red-bg); color: var(--red); }
+.pill.amber, .st.amber { background: var(--amber-bg); color: var(--amber); }
+.pill.green, .st.green { background: var(--green-bg); color: var(--green); }
+.pill.grey, .st.grey { background: var(--grey-bg); color: var(--grey); }
+.pill.unknown, .st.unknown { background: var(--unknown-bg); color: var(--unknown); }
+main { padding: 16px; max-width: 1500px; margin: 0 auto; }
+.errors { color: var(--unknown); font-size: 12px; margin-bottom: 12px; }
+.note { color: var(--muted); font-size: 12px; margin: 0 0 10px; }
+.wrap { overflow-x: auto; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; }
+table { border-collapse: collapse; width: 100%; }
+th, td { padding: 7px 10px; text-align: left; border-bottom: 1px solid var(--line); vertical-align: top; }
+th { font-size: 12px; color: var(--muted); font-weight: 600; background: var(--sunk); position: sticky; top: 0; }
+th.num, td.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+tr:last-child td { border-bottom: 0; }
+td.num.amber { color: var(--amber); font-weight: 600; }
+td.num.none { color: var(--grey); }
+.ns { font-weight: 600; }
+.apps, .flags { color: var(--muted); font-size: 12px; }
+.flags { color: var(--amber); }
+.st { display: inline-block; border-radius: 6px; padding: 1px 8px; font-size: 12px; font-weight: 600; }
+.mons { display: flex; flex-direction: column; gap: 4px; }
+.mon { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; font-size: 12px; }
+.mon .name { min-width: 150px; }
+.mon .num { color: var(--muted); font-variant-numeric: tabular-nums; }
+.mon .msg { color: var(--red); }
+.beats { display: inline-flex; gap: 1px; height: 12px; align-items: stretch; }
+.beats i { width: 3px; border-radius: 1px; background: var(--grey); }
+.beats i.up { background: var(--green); } .beats i.down { background: var(--red); }
+.beats i.pending { background: var(--amber); } .beats i.maintenance { background: var(--focus); }
+.group { margin-bottom: 14px; }
+.group h3 { font-size: 13px; margin: 0 0 6px; color: var(--muted); }
+.cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 8px; }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; }
+.card.down { border-color: var(--red); }
+.card .mon .name { min-width: 0; font-weight: 600; }
+</style>
+</head>
+<body>
+<header>
+  <div>
+    <h1>Services</h1>
+    <div class="meta" id="meta">loading…</div>
+  </div>
+  <div class="counts" id="counts"></div>
+  <div class="meta"><a href="map">status map →</a></div>
+</header>
+<main>
+  <div class="errors" id="errors"></div>
+  <p class="note">Golden signals over the last <span id="win">5m</span>. Traffic, errors and latency are what the Istio gateway sees, so a service without a <code>*.lab.home</code> route shows "–". Saturation is the busiest container's CPU and the fullest container's memory against its limit. Amber is the paging threshold getting close: 5xx &gt; 10%, p95 &gt; 3s, &gt; 90% of a limit.</p>
+  <div class="wrap">
+    <table>
+      <thead><tr>
+        <th>Service</th>
+        <th class="num">Traffic</th>
+        <th class="num">Errors (5xx)</th>
+        <th class="num">Latency p95</th>
+        <th class="num">CPU / limit</th>
+        <th class="num">Memory / limit</th>
+        <th>Uptime Kuma (24h uptime · latest ping · last 30 checks)</th>
+      </tr></thead>
+      <tbody id="rows"></tbody>
+    </table>
+  </div>
+  <h2>Outside the cluster</h2>
+  <p class="note">Uptime Kuma monitors that map to no namespace: the Proxmox host, its LXCs and VMs, the home network. Only monitors on the public status page appear.</p>
+  <div id="outside"></div>
+</main>
+<script>
+"use strict";
+const $ = (id) => document.getElementById(id);
+function el(tag, cls, text) {
+  const e = document.createElement(tag);
+  if (cls) e.className = cls;
+  if (text !== undefined && text !== null) e.textContent = String(text);
+  return e;
+}
+const pct = (f) => (f * 100).toFixed(f < 0.1 && f > 0 ? 1 : 0) + "%";
+function rps(f) { return f >= 10 ? f.toFixed(0) + "/s" : f >= 0.1 ? f.toFixed(2) + "/s" : (f * 60).toFixed(1) + "/min"; }
+function ms(f) { return f >= 1000 ? (f / 1000).toFixed(2) + " s" : f.toFixed(0) + " ms"; }
+
+function numCell(v, fmt, amberAbove) {
+  const td = el("td", "num");
+  if (v === undefined || v === null) { td.classList.add("none"); td.textContent = "–"; return td; }
+  td.textContent = fmt(v);
+  if (amberAbove !== undefined && v > amberAbove) td.classList.add("amber");
+  return td;
+}
+
+function monLine(m) {
+  const row = el("div", "mon");
+  const cls = m.state === "up" ? "green" : m.state === "down" ? "red" : m.state === "pending" ? "amber" : "grey";
+  row.append(el("span", "st " + cls, m.state));
+  row.append(el("span", "name", m.name));
+  if (m.uptime24 !== undefined) row.append(el("span", "num", (m.uptime24 * 100).toFixed(2) + "%"));
+  if (m.pingMs !== undefined) row.append(el("span", "num", m.pingMs + " ms"));
+  if (m.certDays !== undefined) row.append(el("span", "num", "cert " + m.certDays + "d"));
+  if (m.recent && m.recent.length) {
+    const b = el("span", "beats");
+    b.title = "last " + m.recent.length + " checks, oldest first";
+    for (const s of m.recent) b.append(el("i", s));
+    row.append(b);
+  }
+  if (m.msg) row.append(el("span", "msg", m.msg));
+  return row;
+}
+
+function render(v) {
+  $("meta").textContent = "updated " + new Date(v.generated).toLocaleTimeString() + " · refreshes every 30s";
+  $("win").textContent = v.window;
+  const counts = { red: 0, amber: 0, green: 0, unknown: 0, grey: 0 };
+  for (const s of v.services) counts[s.status] = (counts[s.status] || 0) + 1;
+  const c = $("counts"); c.replaceChildren();
+  for (const k of ["red", "amber", "green"]) if (counts[k]) c.append(el("span", "pill " + k, counts[k] + " " + k));
+  const down = (v.outside || []).filter((m) => m.state === "down").length;
+  if (down) c.append(el("span", "pill red", down + " outside down"));
+
+  $("errors").textContent = (v.errors || []).length ? "Could not read: " + v.errors.join(" · ") : "";
+
+  const rows = $("rows"); rows.replaceChildren();
+  for (const s of v.services) {
+    const tr = el("tr");
+    const first = el("td");
+    const head = el("div");
+    head.append(el("span", "st " + s.status, s.status), document.createTextNode(" "), el("span", "ns", s.namespace));
+    first.append(head);
+    if (s.apps && !(s.apps.length === 1 && s.apps[0] === s.namespace)) first.append(el("div", "apps", s.apps.join(", ")));
+    if (s.flags && s.flags.length) first.append(el("div", "flags", s.flags.join(" · ")));
+    tr.append(first);
+    const g = s.signals || {};
+    tr.append(numCell(g.trafficRps, rps));
+    tr.append(numCell(g.errorShare, pct, 0.10));
+    tr.append(numCell(g.latencyP95Ms, ms, 3000));
+    tr.append(numCell(g.cpuOfLimit, pct, 0.90));
+    tr.append(numCell(g.memoryOfLimit, pct, 0.90));
+    const mt = el("td");
+    const box = el("div", "mons");
+    for (const m of s.monitors || []) box.append(monLine(m));
+    if (!(s.monitors || []).length) box.append(el("span", "apps", "no monitor"));
+    mt.append(box);
+    tr.append(mt);
+    rows.append(tr);
+  }
+
+  const out = $("outside"); out.replaceChildren();
+  const groups = new Map();
+  for (const m of v.outside || []) {
+    if (!groups.has(m.group)) groups.set(m.group, []);
+    groups.get(m.group).push(m);
+  }
+  for (const [name, list] of groups) {
+    const g = el("div", "group");
+    g.append(el("h3", null, name));
+    const cards = el("div", "cards");
+    for (const m of list) {
+      const card = el("div", "card" + (m.state === "down" ? " down" : ""));
+      card.append(monLine(m));
+      cards.append(card);
+    }
+    g.append(cards);
+    out.append(g);
+  }
+  if (!groups.size) out.append(el("p", "note", "none"));
+}
+
+async function load() {
+  try {
+    const r = await fetch("services.json", { cache: "no-store" });
+    if (!r.ok) throw new Error("HTTP " + r.status + ": " + (await r.text()));
+    render(await r.json());
+  } catch (e) {
+    $("errors").textContent = "Could not load services.json: " + e.message;
+  }
+}
+load();
+setInterval(load, 30000);
+</script>
+</body>
+</html>
