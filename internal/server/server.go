@@ -23,6 +23,7 @@ import (
 	"github.com/Blacklotus89898/Warden/internal/investigate"
 	"github.com/Blacklotus89898/Warden/internal/journal"
 	"github.com/Blacklotus89898/Warden/internal/redact"
+	"github.com/Blacklotus89898/Warden/internal/services"
 	"github.com/Blacklotus89898/Warden/internal/statusmap"
 )
 
@@ -70,6 +71,7 @@ type Server struct {
 	Log      *slog.Logger
 	Version  string
 	Map      *statusmap.Builder // nil = no /map
+	Services *services.Builder  // nil = no /services
 
 	queue chan job
 
@@ -82,11 +84,19 @@ type Server struct {
 	mapMu   sync.Mutex
 	mapAt   time.Time
 	mapLast []byte
+
+	svcMu   sync.Mutex
+	svcAt   time.Time
+	svcLast []byte
 }
 
 // MapTTL bounds how often the map re-reads the cluster (~30 GETs a build),
 // however many browsers have it open.
 const MapTTL = 15 * time.Second
+
+// ServicesTTL is how long one /services.json build is reused: Kuma beats
+// every 60s and the signals are 5-minute rates, so 30s loses nothing.
+const ServicesTTL = 30 * time.Second
 
 type sent struct {
 	id string
@@ -365,6 +375,31 @@ func (s *Server) Routes(mux *http.ServeMux) {
 		w.Header().Set("Cache-Control", "no-store")
 		_, _ = w.Write(b)
 	})
+	// Services view (read-only): golden signals + Uptime Kuma per namespace.
+	// Routed on the gateway like /map.
+	mux.HandleFunc("GET /services", func(w http.ResponseWriter, r *http.Request) {
+		if s.Services == nil {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.Header().Set("Content-Security-Policy", "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'")
+		_, _ = w.Write(services.Page)
+	})
+	mux.HandleFunc("GET /services.json", func(w http.ResponseWriter, r *http.Request) {
+		if s.Services == nil {
+			http.NotFound(w, r)
+			return
+		}
+		b, err := s.servicesJSON(r.Context())
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadGateway)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Cache-Control", "no-store")
+		_, _ = w.Write(b)
+	})
 	mux.HandleFunc("GET /metrics", func(w http.ResponseWriter, r *http.Request) {
 		counts, err := s.J.Counts(r.Context())
 		if err != nil {
@@ -425,6 +460,27 @@ func (s *Server) mapJSON(ctx context.Context) ([]byte, error) {
 		return nil, err
 	}
 	s.mapLast, s.mapAt = out, time.Now()
+	return out, nil
+}
+
+// servicesJSON builds (or reuses, within ServicesTTL) the encoded services view.
+func (s *Server) servicesJSON(ctx context.Context) ([]byte, error) {
+	s.svcMu.Lock()
+	defer s.svcMu.Unlock()
+	if s.svcLast != nil && time.Since(s.svcAt) < ServicesTTL {
+		return s.svcLast, nil
+	}
+	bctx, cancel := context.WithTimeout(ctx, 20*time.Second)
+	defer cancel()
+	v, err := s.Services.Build(bctx)
+	if err != nil {
+		return nil, err
+	}
+	out, err := json.Marshal(v)
+	if err != nil {
+		return nil, err
+	}
+	s.svcLast, s.svcAt = out, time.Now()
 	return out, nil
 }
 

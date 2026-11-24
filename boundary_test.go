@@ -9,10 +9,12 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/Blacklotus89898/Warden/internal/investigate"
 	"github.com/Blacklotus89898/Warden/internal/kube"
+	"github.com/Blacklotus89898/Warden/internal/kuma"
 )
 
 func TestKubeCatalogueIsReadOnlyAndClosed(t *testing.T) {
@@ -77,5 +79,40 @@ func TestCollectorCatalogueIsPinned(t *testing.T) {
 	want := []string{"pods", "logs", "events", "argocd", "nodes", "metric", "kb"}
 	if !reflect.DeepEqual(investigate.Collectors, want) {
 		t.Fatalf("collectors = %v; adding one changes the ADR 0011 boundary", investigate.Collectors)
+	}
+}
+
+// Homelab ADR 0011 amendment (2026-11-24): Uptime Kuma is read through its
+// public status page only — two fixed GET paths, no credentials sent.
+func TestKumaReadsOnlyThePublicStatusPage(t *testing.T) {
+	var seen []string
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			t.Errorf("non-GET request: %s", r.Method)
+		}
+		if r.Header.Get("Authorization") != "" || r.Header.Get("Cookie") != "" {
+			t.Error("Kuma requests must carry no credentials")
+		}
+		seen = append(seen, r.URL.Path)
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	defer ts.Close()
+	c := &kuma.Client{Base: ts.URL, Slug: "homelab"}
+	want := []string{"/api/status-page/homelab", "/api/status-page/heartbeat/homelab"}
+	if !reflect.DeepEqual(c.Paths(), want) {
+		t.Fatalf("paths = %v; widening them changes the ADR 0011 boundary", c.Paths())
+	}
+	if _, err := c.Fetch(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(seen, want) {
+		t.Fatalf("requested %v, want exactly %v", seen, want)
+	}
+	// A slug can't climb out of the status-page API.
+	evil := &kuma.Client{Base: ts.URL, Slug: "../../metrics"}
+	for _, p := range evil.Paths() {
+		if p == "/metrics" || !strings.HasPrefix(p, "/api/status-page/") || strings.Contains(p, "/../") {
+			t.Errorf("slug escaped: %s", p)
+		}
 	}
 }

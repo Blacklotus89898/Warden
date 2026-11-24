@@ -48,6 +48,9 @@ redacted, truncated digest goes to ntfy topic `warden`.
   ClusterRole (`warden-read`) grants the same set and nothing more.
 - **Tools:** there is no shell, no generic HTTP fetch and no write path.
   Warden's only outputs are its journal and ntfy.
+- **Uptime Kuma:** two fixed `GET` paths on its *public* status page
+  (`/api/status-page/<slug>` and `.../heartbeat/<slug>`), no credentials.
+  It sees exactly what a browser on the LAN sees.
 - **Untrusted input:** alert labels, events and logs are all treated as
   untrusted. Everything leaving the journal is redacted, because ntfy is
   unauthenticated on the LAN.
@@ -96,6 +99,32 @@ cluster; its box is inferred from the nodes. Like everything in Warden, the
 map runs on the worker: when the worker is down, so is the map (the GitHub
 heartbeat watchdog covers that case).
 
+## Services
+
+`/services` is one row per namespace that ArgoCD deploys, worst first, with
+the four golden signals over the last 5 minutes and that service's Uptime
+Kuma monitors:
+
+| Signal | Source |
+|---|---|
+| Traffic | requests/s at the Istio gateway (`istio_requests_total`, reporter=source) |
+| Errors | 5xx share of those requests |
+| Latency | p95 at the gateway (`istio_request_duration_milliseconds_bucket`) |
+| Saturation | the busiest container's CPU and the fullest container's memory, each against its limit |
+| Uptime Kuma | per monitor: state, 24h uptime, latest ping, cert days, the last 30 checks |
+
+Traffic, errors and latency exist only for services with a `*.lab.home`
+route; the rest show "–". Amber means a paging threshold in Homelab's
+`golden-signals-rules.yaml` is getting close (5xx > 10%, p95 > 3s, > 90% of a
+limit), and a monitor that is down makes its service red. Nothing is
+concluded or acted on: it is evidence for the person investigating.
+
+A monitor joins a namespace by its name: as a front-door host
+(`kavita.lab.home`), as a namespace or app name (`Sealed Secrets` →
+`sealed-secrets`), or through `WARDEN_KUMA_MAP`. Monitors that join nothing
+(the Proxmox host, LXCs, the router) are listed under "Outside the cluster",
+grouped as on the Kuma status page.
+
 ## API
 
 | | |
@@ -105,6 +134,8 @@ heartbeat watchdog covers that case).
 | `GET /investigations/{id}` | one bundle with its journal trail |
 | `GET /map` | the status map page: host → nodes → platform → observability → apps → front doors |
 | `GET /map.json` | the data behind it (rebuilt at most every 15s) |
+| `GET /services` | the services page: golden signals + Uptime Kuma per namespace |
+| `GET /services.json` | the data behind it (rebuilt at most every 30s) |
 | `GET /metrics` | journal events by kind, `warden_enabled` |
 | `GET /health` | liveness |
 
@@ -117,13 +148,17 @@ heartbeat watchdog covers that case).
 | `WARDEN_NTFY_URL` / `WARDEN_NTFY_TOPIC` | — / `warden` | digest push (empty URL = off) |
 | `WARDEN_VM_URL` | `http://vmsingle-vmstack.monitoring.svc:8428` | instant queries |
 | `WARDEN_KB_ROOTS` | — | `label=dir,label=dir` (git-synced markdown) |
+| `WARDEN_KUMA_URL` / `WARDEN_KUMA_SLUG` | `http://uptime-kuma.monitoring.svc:3001` / `homelab` | public status page read by `/services` (`off` = no monitors) |
+| `WARDEN_KUMA_MAP` | — | `Monitor name=namespace;…` for monitors whose name resolves to no namespace (`VictoriaMetrics=monitoring`). `;`-separated because names can hold commas |
 | `WARDEN_MAP_HOSTS` | — | `label=namespace,…` for front-door hosts whose first label isn't a namespace or app name (`grafana=monitoring`). Used by both the map and front-door investigations |
 
 ## Roadmap
 
 These are the ADR 0011 phases: 1a evidence (this) → 1b model summary over
 the bundle → 2 replay eval → 3 fixes as PRs → 4 gated live actions →
-5 narrow self-approval.
+5 narrow self-approval. **On hold from 1b (2026-11-24):** no model step for
+now. The operator investigates and approves; Warden gathers and presents
+evidence.
 
 ```bash
 go test ./...

@@ -22,8 +22,10 @@ import (
 	"github.com/Blacklotus89898/Warden/internal/journal"
 	"github.com/Blacklotus89898/Warden/internal/kb"
 	"github.com/Blacklotus89898/Warden/internal/kube"
+	"github.com/Blacklotus89898/Warden/internal/kuma"
 	"github.com/Blacklotus89898/Warden/internal/notify"
 	"github.com/Blacklotus89898/Warden/internal/server"
+	"github.com/Blacklotus89898/Warden/internal/services"
 	"github.com/Blacklotus89898/Warden/internal/statusmap"
 	"github.com/Blacklotus89898/Warden/internal/vm"
 )
@@ -73,6 +75,21 @@ func main() {
 			hosts[l] = ns
 		}
 	}
+	// Uptime Kuma's public status page (unauthenticated, read-only).
+	// WARDEN_KUMA_URL=off drops the monitors; the signals still show.
+	var kumaClient services.Kuma
+	if u := envOr("WARDEN_KUMA_URL", "http://uptime-kuma.monitoring.svc:3001"); u != "off" {
+		kumaClient = &kuma.Client{Base: u, Slug: envOr("WARDEN_KUMA_SLUG", "homelab")}
+	}
+	// "Monitor name=namespace;…" for monitors whose name resolves to no
+	// namespace on its own (VictoriaMetrics → monitoring). ';'-separated
+	// because monitor names may contain commas.
+	monNS := map[string]string{}
+	for _, kv := range strings.Split(os.Getenv("WARDEN_KUMA_MAP"), ";") {
+		if name, ns, ok := strings.Cut(kv, "="); ok {
+			monNS[strings.TrimSpace(name)] = strings.TrimSpace(ns)
+		}
+	}
 	srv := &server.Server{
 		J: j, Enabled: enabled, DailyCap: daily, Log: logger, Version: version,
 		Runner: &investigate.Investigator{
@@ -81,8 +98,9 @@ func main() {
 			KB:      &kb.Index{Roots: roots},
 			Hosts:   hosts,
 		},
-		Map:    &statusmap.Builder{Kube: kc, Metrics: metrics, Hosts: hosts},
-		Notify: notify.Ntfy{URL: os.Getenv("WARDEN_NTFY_URL"), Topic: envOr("WARDEN_NTFY_TOPIC", "warden")},
+		Map:      &statusmap.Builder{Kube: kc, Metrics: metrics, Hosts: hosts},
+		Services: &services.Builder{Kube: kc, Metrics: metrics, Kuma: kumaClient, Hosts: hosts, MonitorNS: monNS},
+		Notify:   notify.Ntfy{URL: os.Getenv("WARDEN_NTFY_URL"), Topic: envOr("WARDEN_NTFY_TOPIC", "warden")},
 	}
 	srv.Start(ctx)
 	_, _ = j.Append(ctx, "service.started", "", map[string]any{
