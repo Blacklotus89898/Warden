@@ -116,7 +116,7 @@ func TestVerify(t *testing.T) {
 func TestJWKSCachedAndRateLimited(t *testing.T) {
 	ts, hits := jwks(t)
 	clk := now
-	v := &Verifier{JWKSURL: ts.URL, Now: func() time.Time { return clk }}
+	v := &Verifier{JWKSURL: ts.URL, Audience: "warden-client", Now: func() time.Time { return clk }}
 	for i := 0; i < 5; i++ {
 		_, _ = v.Verify(context.Background(), sign(t, "RS256", "rsa1", good()))
 		_, _ = v.Verify(context.Background(), sign(t, "RS256", "unknown", good()))
@@ -134,8 +134,19 @@ func TestJWKSCachedAndRateLimited(t *testing.T) {
 func TestJWKSDown(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(500) }))
 	defer ts.Close()
-	v := &Verifier{JWKSURL: ts.URL, Now: func() time.Time { return now }}
+	v := &Verifier{JWKSURL: ts.URL, Audience: "warden-client", Now: func() time.Time { return now }}
 	if _, err := v.Verify(context.Background(), sign(t, "RS256", "rsa1", good())); err == nil {
 		t.Fatal("no keys must mean no user")
+	}
+}
+
+func TestNoAudienceRefusesEverything(t *testing.T) {
+	ts, hits := jwks(t)
+	v := &Verifier{JWKSURL: ts.URL, Now: func() time.Time { return now }}
+	if _, err := v.Verify(context.Background(), sign(t, "RS256", "rsa1", good())); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("a verifier without an audience must refuse, got %v", err)
+	}
+	if *hits != 0 {
+		t.Error("and must not even fetch keys")
 	}
 }

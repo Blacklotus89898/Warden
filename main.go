@@ -98,6 +98,9 @@ func main() {
 	var auth *authjwt.Verifier
 	if u := os.Getenv("WARDEN_AUTH_JWKS_URL"); u != "" {
 		auth = &authjwt.Verifier{JWKSURL: u, Issuer: os.Getenv("WARDEN_AUTH_ISSUER"), Audience: os.Getenv("WARDEN_AUTH_AUDIENCE")}
+		if auth.Audience == "" {
+			logger.Error("WARDEN_AUTH_AUDIENCE is not set: the console refuses every sign-in until it is (the rest of Warden runs)")
+		}
 	} else {
 		logger.Warn("WARDEN_AUTH_JWKS_URL is not set: the console trusts the user header as-is (development only)")
 	}

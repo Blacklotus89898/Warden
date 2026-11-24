@@ -196,7 +196,8 @@ grouped as on the Kuma status page.
 | `WARDEN_KUMA_MAP` | — | `Monitor name=namespace;…` for monitors whose name resolves to no namespace (`VictoriaMetrics=monitoring`). `;`-separated because names can hold commas |
 | `WARDEN_PUBLIC_URL` | — | where the console is reached (`https://warden.lab.home`); pushes link to their investigation |
 | `WARDEN_AUTH_JWKS_URL` | — | authentik provider JWKS (`http://authentik.default.svc:9000/application/o/<slug>/jwks/`). Set in production: the console user then comes only from a verified `X-Authentik-Jwt` |
-| `WARDEN_AUTH_ISSUER` / `WARDEN_AUTH_AUDIENCE` | — | optional exact `iss`, and the provider's client ID required in `aud` |
+| `WARDEN_AUTH_AUDIENCE` | — | **required with a JWKS URL**: the provider's client ID, which must be in `aud`. Without it the console refuses every sign-in (a token minted for another authentik app would otherwise pass); the rest of Warden runs |
+| `WARDEN_AUTH_ISSUER` | — | optional exact `iss` |
 | `WARDEN_USER_HEADER` | `X-Authentik-Username` | **development only**, used when no JWKS is set: the header is trusted as-is. Every console API call requires a user either way, so a missing gateway policy fails closed
 | `WARDEN_MAP_HOSTS` | — | `label=namespace,…` for front-door hosts whose first label isn't a namespace or app name (`grafana=monitoring`). Used by both the map and front-door investigations |
 

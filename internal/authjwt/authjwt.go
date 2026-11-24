@@ -30,7 +30,7 @@ import (
 type Verifier struct {
 	JWKSURL  string // http://authentik.default.svc:9000/application/o/<slug>/jwks/
 	Issuer   string // optional: exact "iss"
-	Audience string // optional: must be in "aud" (the provider's client ID)
+	Audience string // required: must be in "aud" (the provider's client ID)
 	HTTP     *http.Client
 	Now      func() time.Time
 	// CacheFor is how long a fetched key set is reused (default 10m). An
@@ -86,6 +86,11 @@ func (v *Verifier) now() time.Time {
 
 // Verify checks token and returns its claims.
 func (v *Verifier) Verify(ctx context.Context, token string) (*Claims, error) {
+	// No audience means any app signed by the same authentik key would pass:
+	// refuse everything rather than accept tokens minted for other apps.
+	if v.Audience == "" {
+		return nil, invalid("no audience configured (WARDEN_AUTH_AUDIENCE)")
+	}
 	parts := strings.Split(token, ".")
 	if len(parts) != 3 {
 		return nil, invalid("not a JWS compact token")
@@ -139,14 +144,12 @@ func (v *Verifier) Verify(ctx context.Context, token string) (*Claims, error) {
 	if v.Issuer != "" && c.Issuer != v.Issuer {
 		return nil, invalid("issuer %q", c.Issuer)
 	}
-	if v.Audience != "" {
-		ok := false
-		for _, a := range c.Audience {
-			ok = ok || a == v.Audience
-		}
-		if !ok {
-			return nil, invalid("audience")
-		}
+	ok := false
+	for _, a := range c.Audience {
+		ok = ok || a == v.Audience
+	}
+	if !ok {
+		return nil, invalid("audience")
 	}
 	if c.Username == "" {
 		c.Username = c.Subject
