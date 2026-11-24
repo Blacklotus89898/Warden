@@ -181,8 +181,9 @@ type Event struct {
 		Kind string `json:"kind"`
 		Name string `json:"name"`
 	} `json:"involvedObject"`
-	LastTimestamp time.Time `json:"lastTimestamp"`
-	EventTime     time.Time `json:"eventTime"`
+	FirstTimestamp time.Time `json:"firstTimestamp"`
+	LastTimestamp  time.Time `json:"lastTimestamp"`
+	EventTime      time.Time `json:"eventTime"`
 }
 
 // Node is the subset of a Node Warden uses.
@@ -226,9 +227,20 @@ type Application struct {
 			Message string `json:"message"`
 		} `json:"conditions"`
 		OperationState *struct {
-			Phase   string `json:"phase"`
-			Message string `json:"message"`
+			Phase      string    `json:"phase"`
+			Message    string    `json:"message"`
+			StartedAt  time.Time `json:"startedAt"`
+			FinishedAt time.Time `json:"finishedAt"`
+			SyncResult *struct {
+				Revision string `json:"revision"`
+			} `json:"syncResult,omitempty"`
 		} `json:"operationState,omitempty"`
+		// History is ArgoCD's record of past successful syncs (newest last).
+		History []struct {
+			ID         int       `json:"id"`
+			Revision   string    `json:"revision"`
+			DeployedAt time.Time `json:"deployedAt"`
+		} `json:"history"`
 	} `json:"status"`
 }
 

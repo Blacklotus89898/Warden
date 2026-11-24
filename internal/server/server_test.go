@@ -30,7 +30,7 @@ type fakeNotify struct {
 	titles []string
 }
 
-func (f *fakeNotify) Send(_ context.Context, title, _, _ string) error {
+func (f *fakeNotify) Send(_ context.Context, title, _, _, _ string) error {
 	f.mu.Lock()
 	f.titles = append(f.titles, title)
 	f.mu.Unlock()

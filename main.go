@@ -18,6 +18,8 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/Blacklotus89898/Warden/internal/authjwt"
+	"github.com/Blacklotus89898/Warden/internal/console"
 	"github.com/Blacklotus89898/Warden/internal/investigate"
 	"github.com/Blacklotus89898/Warden/internal/journal"
 	"github.com/Blacklotus89898/Warden/internal/kb"
@@ -90,6 +92,18 @@ func main() {
 			monNS[strings.TrimSpace(name)] = strings.TrimSpace(ns)
 		}
 	}
+	// The console's user comes from authentik's signed JWT, verified against
+	// the provider's public JWKS. Without it the username header is trusted,
+	// which any client can forge: development only.
+	var auth *authjwt.Verifier
+	if u := os.Getenv("WARDEN_AUTH_JWKS_URL"); u != "" {
+		auth = &authjwt.Verifier{JWKSURL: u, Issuer: os.Getenv("WARDEN_AUTH_ISSUER"), Audience: os.Getenv("WARDEN_AUTH_AUDIENCE")}
+		if auth.Audience == "" {
+			logger.Error("WARDEN_AUTH_AUDIENCE is not set: the console refuses every sign-in until it is (the rest of Warden runs)")
+		}
+	} else {
+		logger.Warn("WARDEN_AUTH_JWKS_URL is not set: the console trusts the user header as-is (development only)")
+	}
 	srv := &server.Server{
 		J: j, Enabled: enabled, DailyCap: daily, Log: logger, Version: version,
 		Runner: &investigate.Investigator{
@@ -100,7 +114,13 @@ func main() {
 		},
 		Map:      &statusmap.Builder{Kube: kc, Metrics: metrics, Hosts: hosts},
 		Services: &services.Builder{Kube: kc, Metrics: metrics, Kuma: kumaClient, Hosts: hosts, MonitorNS: monNS},
-		Notify:   notify.Ntfy{URL: os.Getenv("WARDEN_NTFY_URL"), Topic: envOr("WARDEN_NTFY_TOPIC", "warden")},
+		Console:  &console.Console{Kube: kc, Metrics: metrics, J: j},
+		// Pushes link to their investigation here; the gateway puts /console
+		// behind authentik, which sets the user header on every request.
+		PublicURL:  os.Getenv("WARDEN_PUBLIC_URL"),
+		Auth:       auth,
+		UserHeader: envOr("WARDEN_USER_HEADER", "X-Authentik-Username"),
+		Notify:     notify.Ntfy{URL: os.Getenv("WARDEN_NTFY_URL"), Topic: envOr("WARDEN_NTFY_TOPIC", "warden")},
 	}
 	srv.Start(ctx)
 	_, _ = j.Append(ctx, "service.started", "", map[string]any{

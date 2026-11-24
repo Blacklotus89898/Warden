@@ -14,12 +14,13 @@ import (
 type Ntfy struct {
 	URL      string // http://ntfy.monitoring.svc
 	Topic    string
-	ClickURL string // optional: where tapping the push goes
+	ClickURL string // optional default for where tapping the push goes
 	HTTP     *http.Client
 }
 
-// Send posts title + body. A no-op when URL is empty.
-func (n Ntfy) Send(ctx context.Context, title, body, priority string) error {
+// Send posts title + body; click (or ClickURL when empty) is where tapping
+// the push goes. A no-op when URL is empty.
+func (n Ntfy) Send(ctx context.Context, title, body, priority, click string) error {
 	if n.URL == "" {
 		return nil
 	}
@@ -33,8 +34,11 @@ func (n Ntfy) Send(ctx context.Context, title, body, priority string) error {
 	if priority != "" {
 		req.Header.Set("Priority", priority)
 	}
-	if n.ClickURL != "" {
-		req.Header.Set("Click", n.ClickURL)
+	if click == "" {
+		click = n.ClickURL
+	}
+	if click != "" {
+		req.Header.Set("Click", click)
 	}
 	hc := n.HTTP
 	if hc == nil {
