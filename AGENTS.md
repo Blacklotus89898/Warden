@@ -26,7 +26,7 @@ go run ./cmd/warden-demo     # every page on fake data at http://localhost:8080 
 
 The real binary (`go build .`) only runs in-cluster. Use the demo to see a UI change. When a
 page starts reading something new, extend `internal/demo` so `TestDemoServesEveryPage` stays
-green, and refresh the affected screenshot in `docs/images/` (README "Getting started").
+green, and rerun `scripts/screenshots.sh` to refresh `docs/images/` (README "Getting started").
 
 CI (`.github/workflows/ci.yaml`) runs vet/build/test on PRs and `main`;
 `build-image.yaml` publishes `ghcr.io/blacklotus89898/warden:<sha>` from `main`.
@@ -37,7 +37,8 @@ See README "Layout". In short: `main.go` wiring; `internal/kube` is the ONLY Kub
 client (GET on a fixed catalogue); `internal/investigate` collectors; `internal/statusmap`,
 `internal/services`, `internal/console` back the three pages (each embeds its HTML);
 `internal/authjwt` verifies the console user; `internal/server` handlers and limits;
-`internal/demo` + `cmd/warden-demo` are fake sources for local work, never used in production.
+`internal/demo` + `cmd/warden-demo` are fake sources for local work, never used in production;
+`scripts/screenshots.sh` regenerates the README images from the demo.
 
 ## Non-negotiables
 

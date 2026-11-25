@@ -1,5 +1,9 @@
 # Warden
 
+[![CI](https://github.com/Blacklotus89898/Warden/actions/workflows/ci.yaml/badge.svg)](https://github.com/Blacklotus89898/Warden/actions/workflows/ci.yaml)
+[![image](https://github.com/Blacklotus89898/Warden/actions/workflows/build-image.yaml/badge.svg)](https://github.com/Blacklotus89898/Warden/actions/workflows/build-image.yaml)
+![Go 1.25](https://img.shields.io/badge/go-1.25-00ADD8)
+
 A read-only incident investigator for the homelab. When an alert fires, Warden
 collects the evidence (pods, logs, events, ArgoCD, nodes, the alert's metric,
 runbooks), journals it and pushes a short digest to your phone. Its pages
@@ -49,8 +53,10 @@ diagnosed it yet. Behind authentik. [Details](#console).
 
 ![One investigation: the alert, your diagnosis, the crash-looping pod with its last log lines, warning events and ArgoCD state](docs/images/investigation.png)
 
-One investigation holds the evidence bundle and your diagnosis: what
-happened, why, and what fixed it. Diagnoses are append-only, and they become
+One investigation holds the evidence bundle (the pod and its previous
+container's last log lines, warning events, ArgoCD, the alert's rule
+evaluated now, matching runbooks) and your diagnosis: what happened, why,
+and what fixed it. Diagnoses are append-only, and they become
 the eval set for later phases.
 
 ![Namespace view: current signals and monitors, blast radius from observed mesh traffic, a what-changed timeline from deploy to OOM kill, and traffic charts](docs/images/namespace.png)
@@ -235,6 +241,7 @@ grouped as on the Kuma status page.
 | `GET /map` | the status map page: host → nodes → platform → observability → apps → front doors |
 | `GET /map.json` | the data behind it (rebuilt at most every 15s) |
 | `GET /console` | the operator console (behind authentik at the gateway) |
+| `GET /console/api/whoami` | the signed-in user, `WARDEN_ENABLED` and the version |
 | `GET /console/api/investigations[/{id}]` | investigations with source and diagnosis state; one bundle with its trail and diagnoses |
 | `POST /console/api/investigate` | `{"namespace","pod","node"}`: run the collectors now (journal only, no push) |
 | `POST /console/api/investigations/{id}/diagnosis` | `{"text"}`: append your diagnosis |
@@ -278,7 +285,8 @@ go run ./cmd/warden-demo          # every page on a made-up homelab, no cluster 
 
 The demo uses the real server, journal, collectors and pages, with fake
 Kubernetes, VictoriaMetrics and Uptime Kuma sources (`internal/demo`). It
-seeds an alert investigation, an operator investigation and a diagnosis,
+seeds an alert investigation (with its rule expression and knowledge-base
+hits from a small stand-in KB), an operator investigation and a diagnosis,
 and signs you into the console as `demo`. Nothing is pushed, and its journal
 is a temporary file that is removed on exit. Use it to work on a page:
 change the HTML, rerun, and reload.
@@ -290,13 +298,10 @@ go test ./...     # includes boundary_test.go: never weaken it to make a change 
 go build .        # the real binary; it only runs in-cluster (kube.InCluster)
 ```
 
-**Screenshots** in `docs/images/` come from the demo. Start it, then capture
-each page at 1440px wide:
-`/map`, `/services#range=24h&open=linkding`, `/console#/`,
-`/console#/inv/<the ContainerOOMKilled id>` and `/console#/ns/linkding`.
-For example, `firefox --headless --screenshot out.png --window-size=1440,1000 <url>`
-works, but it captures on page load, so delay the page until its data has
-rendered.
+**Screenshots** in `docs/images/` come from the demo:
+`scripts/screenshots.sh` (needs `python3` and `firefox`) starts it, captures
+the five pages at 1440px wide and stops it. Rerun it after a visible UI
+change and commit the images with the change.
 
 **Ship:** merge to `main`. `build-image.yaml` publishes
 `ghcr.io/blacklotus89898/warden:<sha>`. Bump that SHA in Homelab
@@ -326,6 +331,7 @@ internal/console       /console data: timeline, traffic, blast radius (+ console
 internal/authjwt       verifies authentik's X-Authentik-Jwt against the provider JWKS
 internal/server        HTTP handlers, grouping, rate limits, console guards
 internal/demo          fake sources for cmd/warden-demo (not used by the real binary)
+scripts/screenshots.sh regenerates docs/images from the demo
 ```
 
 Pages are single embedded HTML files with inline JS (no build step, no

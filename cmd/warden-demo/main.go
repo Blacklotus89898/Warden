@@ -18,6 +18,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -53,11 +54,15 @@ func main() {
 	}
 	defer j.Close()
 
+	kbDir, err := demo.WriteKB(dir)
+	if err != nil {
+		fail(err)
+	}
 	src := demo.New(time.Now())
 	hosts := map[string]string{"grafana": "monitoring"}
 	srv := &server.Server{
 		J: j, Enabled: true, DailyCap: 40, Log: logger, Version: "demo",
-		Runner:     &investigate.Investigator{Kube: src, Metrics: src, KB: &kb.Index{}, Hosts: hosts},
+		Runner:     &investigate.Investigator{Kube: src, Metrics: src, KB: &kb.Index{Roots: []kb.Root{{Label: "davinci", Dir: kbDir}}}, Hosts: hosts},
 		Map:        &statusmap.Builder{Kube: src, Metrics: src, Hosts: hosts},
 		Services:   &services.Builder{Kube: src, Metrics: src, Kuma: src, Hosts: hosts, MonitorNS: demo.MonitorNS},
 		Console:    &console.Console{Kube: src, Metrics: src, J: j},
@@ -102,8 +107,11 @@ func seed(ctx context.Context, h http.Handler, src *demo.Source) error {
 		"status": "firing", "fingerprint": "demo-oom",
 		"labels": map[string]string{"alertname": "ContainerOOMKilled", "severity": "warning",
 			"namespace": "linkding", "pod": "linkding-c41f9e-7xk2p", "container": "linkding"},
-		"annotations": map[string]string{"summary": "linkding was OOM-killed 6 times in the last hour"},
-		"startsAt":    src.Now.Add(-48 * time.Minute),
+		"annotations": map[string]string{"summary": "linkding was OOM-killed 6 times in the last hour",
+			"runbook_url": "kb://runbooks/k8s-oomkilled.md"},
+		// Homelab's ContainerOOMKilled rule, as vmalert links it.
+		"generatorURL": "http://vmalert.monitoring.svc:8080/vmalert/alert?g0.expr=" + url.QueryEscape(oomRule),
+		"startsAt":     src.Now.Add(-48 * time.Minute),
 	}}}
 	b, _ := json.Marshal(alert)
 	if _, err := call(http.MethodPost, "/alerts", string(b)); err != nil {
@@ -133,6 +141,10 @@ func seed(ctx context.Context, h http.Handler, src *demo.Source) error {
 	}
 	return nil
 }
+
+const oomRule = `(max by (namespace, pod, container) (kube_pod_container_status_last_terminated_reason{reason="OOMKilled"}) == 1)
+  and on (namespace, pod, container)
+(sum by (namespace, pod, container) (increase(kube_pod_container_status_restarts_total[10m])) > 0)`
 
 func fail(err error) {
 	fmt.Fprintln(os.Stderr, "warden-demo:", err)

@@ -2,6 +2,8 @@ package demo
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -58,5 +60,17 @@ func TestDemoServesEveryPage(t *testing.T) {
 	b, err := c.Blast(ctx, "linkding")
 	if err != nil || len(b.Errors) != 0 || len(b.Callers) == 0 {
 		t.Fatalf("blast: %v %+v", err, b)
+	}
+}
+
+func TestWriteKB(t *testing.T) {
+	root, err := WriteKB(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range []string{"runbooks/k8s-oomkilled.md", "runbooks/k8s-crashloopbackoff.md", "solutions/golden-signals.md"} {
+		if _, err := os.Stat(filepath.Join(root, p)); err != nil {
+			t.Error(err)
+		}
 	}
 }

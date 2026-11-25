@@ -343,6 +343,9 @@ func (s *Source) Query(_ context.Context, expr string, _ int) ([]vm.Sample, erro
 		}
 		return out, nil
 	}
+	if strings.Contains(expr, "last_terminated_reason") { // the story's ContainerOOMKilled rule
+		return []vm.Sample{{Labels: map[string]string{"namespace": "linkding", "pod": "linkding-c41f9e-7xk2p", "container": "linkding"}, Value: "1"}}, nil
+	}
 	if strings.Contains(expr, "increase(") && strings.Contains(expr, "> 0") {
 		return s.blast(expr), nil
 	}
