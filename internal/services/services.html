@@ -253,7 +253,9 @@ function monLine(m) {
 }
 
 let last = null;
-const open = new Set();
+// #range=24h&open=linkding,kavita: a linkable view (range and open charts).
+const open = new Set(((location.hash.match(/open=([a-z0-9,-]+)/) || [])[1] || "").split(",").filter(Boolean));
+function saveHash() { history.replaceState(null, "", "#range=" + range + (open.size ? "&open=" + [...open].join(",") : "")); }
 let hist = { range: "", series: {} };
 let range = (location.hash.match(/range=(6h|24h|7d|30d)/) || [])[1] || "24h";
 
@@ -278,7 +280,7 @@ function render(v) {
     const btn = el("button", "ns-btn", s.namespace);
     btn.type = "button";
     btn.setAttribute("aria-expanded", String(open.has(s.namespace)));
-    btn.onclick = () => { open.has(s.namespace) ? open.delete(s.namespace) : open.add(s.namespace); render(last); };
+    btn.onclick = () => { open.has(s.namespace) ? open.delete(s.namespace) : open.add(s.namespace); saveHash(); render(last); };
     head.append(el("span", "st " + s.status, s.status), document.createTextNode(" "), btn);
     first.append(head);
     if (s.apps && !(s.apps.length === 1 && s.apps[0] === s.namespace)) first.append(el("div", "apps", s.apps.join(", ")));
@@ -324,7 +326,7 @@ function drawRanges() {
     const b = el("button", null, r);
     b.type = "button";
     b.setAttribute("aria-pressed", String(r === range));
-    b.onclick = () => { range = r; history.replaceState(null, "", "#range=" + r); drawRanges(); loadHistory(); };
+    b.onclick = () => { range = r; saveHash(); drawRanges(); loadHistory(); };
     box.append(b);
   }
 }

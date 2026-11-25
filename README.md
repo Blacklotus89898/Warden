@@ -1,11 +1,71 @@
 # Warden
 
-An incident-investigation agent for the homelab platform. **It reads the
-cluster but never writes to it.** Decision record:
-[Homelab ADR 0011](https://github.com/Blacklotus89898/Homelab/blob/main/docs/adr/0011-warden-sre-agent.md).
-Deployment: [Homelab `services/warden`](https://github.com/Blacklotus89898/Homelab/tree/main/services/warden).
-When it misbehaves: [DaVinci runbook `warden.md`](https://github.com/Blacklotus89898/DaVinci/blob/main/docs/runbooks/warden.md).
-Live map: https://warden.lab.home/map (LAN only).
+[![CI](https://github.com/Blacklotus89898/Warden/actions/workflows/ci.yaml/badge.svg)](https://github.com/Blacklotus89898/Warden/actions/workflows/ci.yaml)
+[![image](https://github.com/Blacklotus89898/Warden/actions/workflows/build-image.yaml/badge.svg)](https://github.com/Blacklotus89898/Warden/actions/workflows/build-image.yaml)
+![Go 1.25](https://img.shields.io/badge/go-1.25-00ADD8)
+
+A read-only incident investigator for the homelab. When an alert fires, Warden
+collects the evidence (pods, logs, events, ArgoCD, nodes, the alert's metric,
+runbooks), journals it and pushes a short digest to your phone. Its pages
+show the platform's state, each service's golden signals and history, and a
+console where **you** investigate and record what happened. **It reads the
+cluster but never writes to it**, and it draws no conclusions: it lays out the
+evidence and you decide.
+
+- Decision record: [Homelab ADR 0011](https://github.com/Blacklotus89898/Homelab/blob/main/docs/adr/0011-warden-sre-agent.md)
+- Deployment: [Homelab `services/warden`](https://github.com/Blacklotus89898/Homelab/tree/main/services/warden)
+- When it misbehaves: [DaVinci runbook `warden.md`](https://github.com/Blacklotus89898/DaVinci/blob/main/docs/runbooks/warden.md)
+- Live (LAN only): [map](https://warden.lab.home/map) · [services](https://warden.lab.home/services) · [console](https://warden.lab.home/console) (authentik sign-in)
+
+**Try it without a cluster:** `go run ./cmd/warden-demo`, then open
+http://localhost:8080/map. See [Getting started](#getting-started).
+
+## The pages
+
+Screenshots are from `warden-demo`, a made-up homelab where a new linkding
+revision is being OOM-killed and the tulip front door is failing.
+
+### Status map: what is broken right now
+
+![Status map: front doors above the Proxmox host, nodes holding platform, observability and app namespaces, a red linkding box and a failing tulip door with its arrow](docs/images/map.png)
+
+The whole platform on one screen, worst first, with a "likely causes" banner.
+Front doors sit on top. Nodes nest inside the host, and namespaces nest inside
+the nodes with one dot per pod. Clicking a box shows why it has that colour.
+[Details](#status-map).
+
+### Services: golden signals and how they moved
+
+![Services page: one row per namespace with traffic, 5xx share, p95, CPU and memory, a sparkline under each, Uptime Kuma monitors on the right, and linkding expanded into five 24h charts](docs/images/services.png)
+
+One row per service with traffic, errors, latency and saturation, plus its
+Uptime Kuma monitors. Under every number is a 6h to 30d sparkline. It turns
+amber with its peak when the series spiked (peak at least 3× the median) or
+crossed the paging threshold. Click a service for full-size charts.
+[Details](#services).
+
+### Console: where you investigate
+
+![Console home: an investigate-now form, the services needing a look, and the investigations list with source and diagnosis state](docs/images/console.png)
+
+Every investigation, from an alert or started by you, and whether you have
+diagnosed it yet. Behind authentik. [Details](#console).
+
+![One investigation: the alert, your diagnosis, the crash-looping pod with its last log lines, warning events and ArgoCD state](docs/images/investigation.png)
+
+One investigation holds the evidence bundle (the pod and its previous
+container's last log lines, warning events, ArgoCD, the alert's rule
+evaluated now, matching runbooks) and your diagnosis: what happened, why,
+and what fixed it. Diagnoses are append-only, and they become
+the eval set for later phases.
+
+![Namespace view: current signals and monitors, blast radius from observed mesh traffic, a what-changed timeline from deploy to OOM kill, and traffic charts](docs/images/namespace.png)
+
+A namespace shows **what changed** (deploys, restarts, events, alerts,
+diagnoses), its **blast radius** (who calls it and what it calls, from
+observed mesh traffic) and its **traffic** over 1h to 7d.
+
+## How it works
 
 ```mermaid
 flowchart LR
@@ -161,7 +221,8 @@ Under each number is its history over 6h, 24h, 7d or 30d (one point per 2m,
 is the peak within it, so a burst between two points still shows). A
 sparkline turns amber, with its peak, when the peak is at least 3× the median
 or crossed the threshold. Clicking a service opens full-size charts with
-min/median/max and when the peak happened. A service that has never served a
+min/median/max and when the peak happened. The view is linkable:
+`/services#range=7d&open=linkding,kavita`. A service that has never served a
 5xx reads 0%, not "–".
 
 A monitor joins a namespace by its name: as a front-door host
@@ -180,6 +241,7 @@ grouped as on the Kuma status page.
 | `GET /map` | the status map page: host → nodes → platform → observability → apps → front doors |
 | `GET /map.json` | the data behind it (rebuilt at most every 15s) |
 | `GET /console` | the operator console (behind authentik at the gateway) |
+| `GET /console/api/whoami` | the signed-in user, `WARDEN_ENABLED` and the version |
 | `GET /console/api/investigations[/{id}]` | investigations with source and diagnosis state; one bundle with its trail and diagnoses |
 | `POST /console/api/investigate` | `{"namespace","pod","node"}`: run the collectors now (journal only, no push) |
 | `POST /console/api/investigations/{id}/diagnosis` | `{"text"}`: append your diagnosis |
@@ -207,8 +269,74 @@ grouped as on the Kuma status page.
 | `WARDEN_AUTH_JWKS_URL` | — | authentik provider JWKS (`http://authentik.default.svc:9000/application/o/<slug>/jwks/`). Set in production: the console user then comes only from a verified `X-Authentik-Jwt` |
 | `WARDEN_AUTH_AUDIENCE` | — | **required with a JWKS URL**: the provider's client ID, which must be in `aud`. Without it the console refuses every sign-in (a token minted for another authentik app would otherwise pass); the rest of Warden runs |
 | `WARDEN_AUTH_ISSUER` | — | optional exact `iss` |
-| `WARDEN_USER_HEADER` | `X-Authentik-Username` | **development only**, used when no JWKS is set: the header is trusted as-is. Every console API call requires a user either way, so a missing gateway policy fails closed
+| `WARDEN_USER_HEADER` | `X-Authentik-Username` | **development only**, used when no JWKS is set: the header is trusted as-is. Every console API call requires a user either way, so a missing gateway policy fails closed |
 | `WARDEN_MAP_HOSTS` | — | `label=namespace,…` for front-door hosts whose first label isn't a namespace or app name (`grafana=monitoring`). Used by both the map and front-door investigations |
+
+## Getting started
+
+You need **Go 1.25** (see `go.mod`). Warden has one dependency (a pure-Go
+SQLite driver) and no cgo.
+
+```bash
+git clone https://github.com/Blacklotus89898/Warden && cd Warden
+go run ./cmd/warden-demo          # every page on a made-up homelab, no cluster needed
+#   http://localhost:8080/map · /services · /console   (-addr to change the port)
+```
+
+The demo uses the real server, journal, collectors and pages, with fake
+Kubernetes, VictoriaMetrics and Uptime Kuma sources (`internal/demo`). It
+seeds an alert investigation (with its rule expression and knowledge-base
+hits from a small stand-in KB), an operator investigation and a diagnosis,
+and signs you into the console as `demo`. Nothing is pushed, and its journal
+is a temporary file that is removed on exit. Use it to work on a page:
+change the HTML, rerun, and reload.
+
+```bash
+gofmt -l .        # must print nothing
+go vet ./...
+go test ./...     # includes boundary_test.go: never weaken it to make a change pass
+go build .        # the real binary; it only runs in-cluster (kube.InCluster)
+```
+
+**Screenshots** in `docs/images/` come from the demo:
+`scripts/screenshots.sh` (needs `python3` and `firefox`) starts it, captures
+the five pages at 1440px wide and stops it. Rerun it after a visible UI
+change and commit the images with the change.
+
+**Ship:** merge to `main`. `build-image.yaml` publishes
+`ghcr.io/blacklotus89898/warden:<sha>`. Bump that SHA in Homelab
+`services/warden/deployment.yaml` with a PR there, and ArgoCD syncs it. Never
+`:latest`, never `kubectl apply`. CI (`ci.yaml`) runs vet, build and test on
+every PR.
+
+### Layout
+
+```
+main.go                wiring and env config for the in-cluster binary
+cmd/warden-demo        the demo: real server + pages on internal/demo's fake sources
+boundary_test.go       pins the read-only boundary (verbs, path catalogue, no write paths)
+internal/alert         alertmanager payload, fingerprint/dedup
+internal/investigate   the collectors; a failing collector is recorded, never fatal
+internal/kube          the ONLY Kubernetes client: GET on a fixed path catalogue
+internal/vm            VictoriaMetrics instant and range queries
+internal/kb            knowledge-base search over git-synced markdown
+internal/kuma          Uptime Kuma public status page (two fixed GETs)
+internal/door          front-door URL → namespace
+internal/journal       append-only SQLite
+internal/redact        redaction before anything leaves the journal
+internal/notify        ntfy digest
+internal/statusmap     /map (+ map.html)
+internal/services      /services and its history (+ services.html)
+internal/console       /console data: timeline, traffic, blast radius (+ console.html)
+internal/authjwt       verifies authentik's X-Authentik-Jwt against the provider JWKS
+internal/server        HTTP handlers, grouping, rate limits, console guards
+internal/demo          fake sources for cmd/warden-demo (not used by the real binary)
+scripts/screenshots.sh regenerates docs/images from the demo
+```
+
+Pages are single embedded HTML files with inline JS (no build step, no
+framework), and they only use `textContent`. Contributor rules are in
+[AGENTS.md](AGENTS.md).
 
 ## Roadmap
 
@@ -217,7 +345,3 @@ the bundle → 2 replay eval → 3 fixes as PRs → 4 gated live actions →
 5 narrow self-approval. **On hold from 1b (2026-11-24):** no model step for
 now. The operator investigates and approves; Warden gathers and presents
 evidence.
-
-```bash
-go test ./...
-```
