@@ -6,42 +6,38 @@ Guide for any coding agent (Claude Code, Codex, Cursor, Copilot, Gemini…) and 
 
 Read-only incident investigator for the homelab: alertmanager webhook → evidence bundle
 (pods, logs, events, ArgoCD, nodes, metric, knowledge base) → append-only journal + redacted
-ntfy digest. Also serves the platform status map at `/map`. One Go binary, stdlib-first.
+ntfy digest. It also serves the platform status map (`/map`), the services view with golden
+signals and history (`/services`), and the operator console (`/console`, behind authentik).
+One Go binary, stdlib-first.
 
-Read before changing behaviour: `README.md` (boundary, grouping, config),
+Read before changing behaviour: `README.md` (pages, boundary, grouping, config),
 [Homelab ADR 0011](https://github.com/Blacklotus89898/Homelab/blob/main/docs/adr/0011-warden-sre-agent.md)
-(the decision record — Warden has no ADR folder of its own), and the DaVinci runbook `docs/runbooks/warden.md`.
+(the decision record; Warden has no ADR folder of its own), and the DaVinci runbook `docs/runbooks/warden.md`.
 
 ## Commands
 
 ```bash
-gofmt -l .          # must print nothing
+gofmt -l .                   # must print nothing
 go vet ./...
 go build ./...
-go test ./...       # includes boundary_test.go — never weaken it to make a change pass
-go run .            # local run; config is env only (see README "Configuration")
+go test ./...                # includes boundary_test.go: never weaken it to make a change pass
+go run ./cmd/warden-demo     # every page on fake data at http://localhost:8080 (no cluster)
 ```
+
+The real binary (`go build .`) only runs in-cluster. Use the demo to see a UI change. When a
+page starts reading something new, extend `internal/demo` so `TestDemoServesEveryPage` stays
+green, and refresh the affected screenshot in `docs/images/` (README "Getting started").
 
 CI (`.github/workflows/ci.yaml`) runs vet/build/test on PRs and `main`;
 `build-image.yaml` publishes `ghcr.io/blacklotus89898/warden:<sha>` from `main`.
 
 ## Layout
 
-```
-main.go               wiring, HTTP server, env config
-boundary_test.go      pins the read-only boundary (API verbs, path patterns, no write paths)
-internal/alert        alertmanager payload parsing, fingerprint/dedup
-internal/investigate  runs the collectors; a failing collector is recorded, never fatal
-internal/kube         the ONLY Kubernetes client — GET on a fixed path catalogue
-internal/vm           VictoriaMetrics instant queries
-internal/kb           knowledge-base search over git-synced markdown (DaVinci docs/)
-internal/door         front-door alert → namespace resolution
-internal/journal      append-only SQLite
-internal/redact       redaction before anything leaves the journal
-internal/notify       ntfy digest
-internal/statusmap    /map
-internal/server       HTTP handlers
-```
+See README "Layout". In short: `main.go` wiring; `internal/kube` is the ONLY Kubernetes
+client (GET on a fixed catalogue); `internal/investigate` collectors; `internal/statusmap`,
+`internal/services`, `internal/console` back the three pages (each embeds its HTML);
+`internal/authjwt` verifies the console user; `internal/server` handlers and limits;
+`internal/demo` + `cmd/warden-demo` are fake sources for local work, never used in production.
 
 ## Non-negotiables
 
@@ -61,7 +57,8 @@ internal/server       HTTP handlers
 2. New collector → `internal/investigate` + its own package if it talks to a new system;
    it must fail soft (record the error, keep the bundle) and be covered by a table test with a fake.
 3. New config → env var with a safe default, documented in the README table.
-4. Update `README.md` when behaviour, config or the boundary changes.
+4. Update `README.md` when behaviour, config or the boundary changes; a visible UI change
+   also updates its screenshot.
 5. `gofmt`, vet, test green → PR with a conventional-commit title (`feat(map): …`, `fix(alert): …`).
 
 ## Shipping
