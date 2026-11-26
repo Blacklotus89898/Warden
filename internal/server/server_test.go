@@ -11,6 +11,7 @@ import (
 	"github.com/Blacklotus89898/Warden/internal/alert"
 	"github.com/Blacklotus89898/Warden/internal/investigate"
 	"github.com/Blacklotus89898/Warden/internal/journal"
+	"github.com/Blacklotus89898/Warden/internal/notify"
 )
 
 type fakeRunner struct {
@@ -28,11 +29,13 @@ func (f *fakeRunner) Run(_ context.Context, id string, a alert.Alert) *investiga
 type fakeNotify struct {
 	mu     sync.Mutex
 	titles []string
+	pushes []notify.Push
 }
 
-func (f *fakeNotify) Send(_ context.Context, title, _, _, _ string) error {
+func (f *fakeNotify) Send(_ context.Context, p notify.Push) error {
 	f.mu.Lock()
-	f.titles = append(f.titles, title)
+	f.titles = append(f.titles, p.Title)
+	f.pushes = append(f.pushes, p)
 	f.mu.Unlock()
 	return nil
 }

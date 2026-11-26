@@ -98,7 +98,13 @@ is recorded without stopping the rest:
 | kb | the alert's `runbook_url`, plus the top knowledge-base hits for the alert name, namespace and problem reasons |
 
 The full bundle is journaled. That record is the future eval set. A
-redacted, truncated digest goes to ntfy topic `warden`.
+redacted, truncated digest goes to ntfy topic `warden`. Each push has buttons: **Investigation**, **What changed** (the
+namespace in the console) and **Grafana**; a storm notice gets **Status map**,
+**Services** and **Console**. With `WARDEN_SUMMARY_AT` set, one low-priority
+**daily summary** lists services that are not green, the last 24h of
+investigations and pushes, alerts not yet diagnosed (7d) and node disk use;
+it is journaled (`summary.sent`), sent once even across a restart, and
+outside the digest cap.
 
 ## The boundary (pinned by `boundary_test.go`)
 
@@ -266,6 +272,8 @@ grouped as on the Kuma status page.
 | `WARDEN_ENABLED` | `true` | `false` = journal only |
 | `WARDEN_DAILY_CAP` | `40` | pushes per UTC day; intake (investigations) is bounded at 4x |
 | `WARDEN_NTFY_URL` / `WARDEN_NTFY_TOPIC` | — / `warden` | digest push (empty URL = off) |
+| `WARDEN_GRAFANA_URL` | — | dashboard the digest's **Grafana** button opens (empty = no button) |
+| `WARDEN_SUMMARY_AT` / `WARDEN_SUMMARY_TZ` | — / `UTC` | daily summary push at `HH:MM` in an IANA zone (empty = off) |
 | `WARDEN_VM_URL` | `http://vmsingle-vmstack.monitoring.svc:8428` | instant queries |
 | `WARDEN_KB_ROOTS` | — | `label=dir,label=dir` (git-synced markdown) |
 | `WARDEN_KUMA_URL` / `WARDEN_KUMA_SLUG` | `http://uptime-kuma.monitoring.svc:3001` / `homelab` | public status page read by `/services` (`off` = no monitors) |
