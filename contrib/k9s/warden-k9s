@@ -18,7 +18,8 @@
 #                       Only investigate/whoami need it; "open" uses the
 #                       browser's own authentik session.
 #   WARDEN_CACERT       CA bundle for *.lab.home if the Homelab Root CA is not
-#                       in the system trust store
+#                       in the system trust store; with it, revocation checks are
+#                       skipped (the lab CA has no CRL; Windows curl would fail)
 #   WARDEN_NO_BROWSER   set to print URLs instead of opening them
 set -eu
 
@@ -53,7 +54,7 @@ api() {
 	set -- "$@" ""
 	cred=$(printf '%s' "$cred" | sed 's/\\/\\\\/g; s/"/\\"/g')
 	printf 'user = "%s"\n' "$cred" |
-		curl -sS --fail-with-body --max-time 120 -K - ${WARDEN_CACERT:+--cacert "$WARDEN_CACERT"} \
+		curl -sS --fail-with-body --max-time 120 -K - ${WARDEN_CACERT:+--ssl-no-revoke --cacert "$WARDEN_CACERT"} \
 			-X "$1" -H 'Content-Type: application/json' -H 'X-Warden-Request: 1' \
 			${3:+--data "$3"} "$url$2"
 }
