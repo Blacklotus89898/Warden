@@ -17,6 +17,7 @@ import (
 	"strings"
 	"syscall"
 	"time"
+	_ "time/tzdata" // IANA zones for WARDEN_SUMMARY_TZ (distroless has none)
 
 	"github.com/Blacklotus89898/Warden/internal/authjwt"
 	"github.com/Blacklotus89898/Warden/internal/console"
@@ -104,6 +105,13 @@ func main() {
 	} else {
 		logger.Warn("WARDEN_AUTH_JWKS_URL is not set: the console trusts the user header as-is (development only)")
 	}
+	// Daily summary push: WARDEN_SUMMARY_AT=HH:MM in WARDEN_SUMMARY_TZ (IANA,
+	// default UTC). Empty = off.
+	summary, err := server.ParseSummaryAt(os.Getenv("WARDEN_SUMMARY_AT"), os.Getenv("WARDEN_SUMMARY_TZ"))
+	if err != nil {
+		logger.Error("daily summary off", "err", err)
+	}
+	summary.Disk = metrics
 	srv := &server.Server{
 		J: j, Enabled: enabled, DailyCap: daily, Log: logger, Version: version,
 		Runner: &investigate.Investigator{
@@ -118,6 +126,8 @@ func main() {
 		// Pushes link to their investigation here; the gateway puts /console
 		// behind authentik, which sets the user header on every request.
 		PublicURL:  os.Getenv("WARDEN_PUBLIC_URL"),
+		GrafanaURL: os.Getenv("WARDEN_GRAFANA_URL"),
+		Summary:    summary,
 		Auth:       auth,
 		UserHeader: envOr("WARDEN_USER_HEADER", "X-Authentik-Username"),
 		Notify:     notify.Ntfy{URL: os.Getenv("WARDEN_NTFY_URL"), Topic: envOr("WARDEN_NTFY_TOPIC", "warden")},

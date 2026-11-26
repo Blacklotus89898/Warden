@@ -24,6 +24,7 @@ import (
 	"github.com/Blacklotus89898/Warden/internal/console"
 	"github.com/Blacklotus89898/Warden/internal/investigate"
 	"github.com/Blacklotus89898/Warden/internal/journal"
+	"github.com/Blacklotus89898/Warden/internal/notify"
 	"github.com/Blacklotus89898/Warden/internal/redact"
 	"github.com/Blacklotus89898/Warden/internal/services"
 	"github.com/Blacklotus89898/Warden/internal/statusmap"
@@ -52,9 +53,9 @@ const (
 	StormAfter  = 4
 )
 
-// Notifier sends the digest (notify.Ntfy implements it).
+// Notifier sends a push (notify.Ntfy implements it).
 type Notifier interface {
-	Send(ctx context.Context, title, body, priority, click string) error
+	Send(ctx context.Context, p notify.Push) error
 }
 
 // Runner investigates one alert (investigate.Investigator implements it).
@@ -78,6 +79,10 @@ type Server struct {
 	// PublicURL is where the console is reached (https://warden.lab.home);
 	// pushes link to their investigation there. Empty = no link.
 	PublicURL string
+	// GrafanaURL is the dashboard a push's "Grafana" button opens. Empty = no button.
+	GrafanaURL string
+	// Summary is the daily summary push; zero value = off (summary.go).
+	Summary Summary
 	// Auth verifies authentik's signed X-Authentik-Jwt; the console's user
 	// comes from the verified token. When nil, UserHeader is trusted as-is
 	// (local development only: any client can set a header).
@@ -133,6 +138,9 @@ const QueueSize = 16
 func (s *Server) Start(ctx context.Context) {
 	s.queue = make(chan job, QueueSize)
 	s.groups = map[string]sent{}
+	if s.Summary.enabled() {
+		go s.summaryLoop(ctx)
+	}
 	go func() {
 		for {
 			select {
@@ -220,7 +228,7 @@ func (s *Server) investigate(ctx context.Context, jb job) {
 	if jb.a.Labels["severity"] == "critical" {
 		prio = "high"
 	}
-	if !s.send(ctx, jb.id, title, body, prio) {
+	if !s.send(ctx, jb.id, notify.Push{Title: title, Body: body, Priority: prio, Actions: s.digestActions(jb.id, b.Namespace)}) {
 		return
 	}
 	s.groups[groupKey(b)] = sent{id: jb.id, at: s.now()}
@@ -292,13 +300,15 @@ func (s *Server) hold(ctx context.Context, jb job, b *investigate.Bundle) bool {
 	}
 	s.storm = sent{id: jb.id, at: now}
 	_, _ = s.J.Append(ctx, KindStorm, jb.id, map[string]any{"digests_in_window": len(s.digests), "window": StormWindow.String()})
-	s.send(ctx, jb.id, title, redact.Truncate(redact.String(w.String()), investigate.DigestLimit), "high")
+	s.send(ctx, jb.id, notify.Push{Title: title, Body: redact.Truncate(redact.String(w.String()), investigate.DigestLimit), Priority: "high",
+		Actions: s.pageActions()})
 	s.groups[key] = s.storm
 	return true
 }
 
 // send pushes one notification within the daily digest cap and journals it.
-func (s *Server) send(ctx context.Context, id, title, body, prio string) bool {
+// The push opens investigation id when tapped.
+func (s *Server) send(ctx context.Context, id string, p notify.Push) bool {
 	day := s.now().UTC().Truncate(24 * time.Hour)
 	if used, err := s.J.CountSince(ctx, KindNotified, day); err != nil || used >= s.cap() {
 		_, _ = s.J.Append(ctx, KindSkipped, id, map[string]string{"reason": fmt.Sprintf("daily digest cap %d reached", s.cap())})
@@ -306,11 +316,12 @@ func (s *Server) send(ctx context.Context, id, title, body, prio string) bool {
 	}
 	nctx, cancel := context.WithTimeout(ctx, 20*time.Second)
 	defer cancel()
-	if err := s.Notify.Send(nctx, title, body, prio, s.InvestigationURL(id)); err != nil {
+	p.Click = s.InvestigationURL(id)
+	if err := s.Notify.Send(nctx, p); err != nil {
 		_, _ = s.J.Append(ctx, KindNotifyError, id, map[string]string{"error": err.Error()})
 		return false
 	}
-	_, _ = s.J.Append(ctx, KindNotified, id, map[string]string{"title": title})
+	_, _ = s.J.Append(ctx, KindNotified, id, map[string]string{"title": p.Title})
 	s.digests = append(s.digests, s.now())
 	return true
 }
@@ -321,6 +332,33 @@ func (s *Server) InvestigationURL(id string) string {
 		return ""
 	}
 	return strings.TrimRight(s.PublicURL, "/") + "/console#/inv/" + id
+}
+
+// page is a Warden page under PublicURL, "" without one.
+func (s *Server) page(path string) string {
+	if s.PublicURL == "" {
+		return ""
+	}
+	return strings.TrimRight(s.PublicURL, "/") + path
+}
+
+// digestActions are the buttons on an alert digest: the investigation, what
+// changed in its namespace, and Grafana. Empty URLs are dropped by notify.
+func (s *Server) digestActions(id, ns string) []notify.Action {
+	a := []notify.Action{{Label: "Investigation", URL: s.InvestigationURL(id)}}
+	if ns != "" && console.ValidNamespace(ns) {
+		a = append(a, notify.Action{Label: "What changed", URL: s.page("/console#/ns/" + ns)})
+	}
+	return append(a, notify.Action{Label: "Grafana", URL: s.GrafanaURL})
+}
+
+// pageActions are the buttons on cluster-wide pushes (storm, summary).
+func (s *Server) pageActions() []notify.Action {
+	return []notify.Action{
+		{Label: "Status map", URL: s.page("/map")},
+		{Label: "Services", URL: s.page("/services")},
+		{Label: "Console", URL: s.page("/console")},
+	}
 }
 
 // Routes registers the HTTP API.
