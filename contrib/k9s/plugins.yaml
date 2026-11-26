@@ -1,0 +1,48 @@
+# Warden in k9s (Homelab ADR 0011 amendment 2026-11-25). Merge into your k9s
+# plugins.yaml (`k9s info` shows where it lives); warden-k9s must be on PATH.
+#
+#   Shift-W  open Warden's console for this namespace (pods, namespaces)
+#   Shift-I  investigate now: this pod, namespace or node; opens the result
+#
+# Warden only reads the cluster. These shortcuts call Warden's API; anything
+# you do afterwards in k9s runs with your own kubeconfig (start k9s with
+# --readonly when you are only looking).
+plugins:
+  warden-console-pod:
+    shortCut: Shift-W
+    description: Warden console
+    scopes: [pods]
+    command: sh
+    background: true
+    args: [-c, 'warden-k9s open ns "$NAMESPACE"']
+  warden-console-ns:
+    shortCut: Shift-W
+    description: Warden console
+    scopes: [namespaces]
+    command: sh
+    background: true
+    args: [-c, 'warden-k9s open ns "$NAME"']
+  warden-investigate-pod:
+    shortCut: Shift-I
+    description: Warden investigate
+    scopes: [pods]
+    confirm: true
+    command: sh
+    background: false
+    args: [-c, 'warden-k9s investigate "$NAMESPACE" "$NAME"; echo; printf "Enter to return to k9s"; read _']
+  warden-investigate-ns:
+    shortCut: Shift-I
+    description: Warden investigate
+    scopes: [namespaces]
+    confirm: true
+    command: sh
+    background: false
+    args: [-c, 'warden-k9s investigate "$NAME"; echo; printf "Enter to return to k9s"; read _']
+  warden-investigate-node:
+    shortCut: Shift-I
+    description: Warden investigate
+    scopes: [nodes]
+    confirm: true
+    command: sh
+    background: false
+    args: [-c, 'warden-k9s investigate-node "$NAME"; echo; printf "Enter to return to k9s"; read _']

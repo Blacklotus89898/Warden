@@ -196,6 +196,11 @@ crossed the ambient mesh in the last 24h. Namespaces outside the mesh and
 calls leaving the cluster are invisible to it. Warden draws no conclusions:
 the console lays the evidence out and you decide.
 
+**From k9s:** [`contrib/k9s`](contrib/k9s/README.md) adds `Shift-W` (open the
+console for this namespace) and `Shift-I` (investigate this pod, namespace or
+node now). It is a client of the API above and signs in with an authentik app
+password; Warden never sees your kubeconfig.
+
 ## Services
 
 `/services` is one row per namespace that ArgoCD deploys, worst first, with
@@ -332,6 +337,7 @@ internal/authjwt       verifies authentik's X-Authentik-Jwt against the provider
 internal/server        HTTP handlers, grouping, rate limits, console guards
 internal/demo          fake sources for cmd/warden-demo (not used by the real binary)
 scripts/screenshots.sh regenerates docs/images from the demo
+contrib/k9s            k9s plugin + warden-k9s client script (not part of the binary)
 ```
 
 Pages are single embedded HTML files with inline JS (no build step, no
