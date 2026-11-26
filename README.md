@@ -15,7 +15,7 @@ evidence and you decide.
 - Decision record: [Homelab ADR 0011](https://github.com/Blacklotus89898/Homelab/blob/main/docs/adr/0011-warden-sre-agent.md)
 - Deployment: [Homelab `services/warden`](https://github.com/Blacklotus89898/Homelab/tree/main/services/warden)
 - When it misbehaves: [DaVinci runbook `warden.md`](https://github.com/Blacklotus89898/DaVinci/blob/main/docs/runbooks/warden.md)
-- Live (LAN only): [map](https://warden.lab.home/map) · [services](https://warden.lab.home/services) · [console](https://warden.lab.home/console) (authentik sign-in)
+- Live (LAN only): https://warden.lab.home opens the [map](https://warden.lab.home/map) · [services](https://warden.lab.home/services) · [console](https://warden.lab.home/console) (authentik sign-in) · [health](https://warden.lab.home/health). `/investigations` and `/metrics` are in-cluster only (the console replaces the first)
 
 **Try it without a cluster:** `go run ./cmd/warden-demo`, then open
 http://localhost:8080/map. See [Getting started](#getting-started).
